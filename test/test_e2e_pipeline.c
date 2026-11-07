@@ -1,6 +1,6 @@
 /**
  * @file test_e2e_pipeline.c
- * @brief End-to-End Simulation of the SMC-Pad Reactive MIDI Pipeline
+ * @brief End-to-End Simulation of the SMC-Pad Reactive MIDI Pipeline with Dispatcher
  */
 
 #include <stdio.h>
@@ -10,66 +10,15 @@
 #include "encoder.h"
 #include "matrix.h"
 #include "pad_adc.h"
-
-/* Captured MIDI packets */
-typedef struct {
-    uint8_t status;
-    uint8_t data1;
-    uint8_t data2;
-} midi_packet_t;
+#include "midi_dispatcher.h"
 
 #define MAX_CAPTURED_MIDI 64
-static midi_packet_t captured_midi[MAX_CAPTURED_MIDI];
+static smc_midi_raw_msg_t captured_midi[MAX_CAPTURED_MIDI];
 static uint32_t captured_midi_count = 0;
 
-static void midi_dispatch(const smc_event_t *ev, smc_encoder_state_t *enc) {
-    if (captured_midi_count >= MAX_CAPTURED_MIDI) {
-        return;
-    }
-
-    midi_packet_t pkt = {0, 0, 0};
-
-    switch (ev->type) {
-        case EVENT_PAD_STRIKE:
-            /* Note On: Channel 1 (0x90), Note = 36 + index, Velocity = ev->value */
-            pkt.status = 0x90;
-            pkt.data1 = (uint8_t)(36 + ev->index);
-            pkt.data2 = (uint8_t)ev->value;
-            captured_midi[captured_midi_count++] = pkt;
-            break;
-
-        case EVENT_PAD_RELEASE:
-            /* Note Off: Channel 1 (0x80), Note = 36 + index, Velocity = 0 */
-            pkt.status = 0x80;
-            pkt.data1 = (uint8_t)(36 + ev->index);
-            pkt.data2 = 0;
-            captured_midi[captured_midi_count++] = pkt;
-            break;
-
-        case EVENT_ENCODER_DELTA:
-            /* Control Change: Channel 1 (0xB0), CC = config cc_number, Val = new val */
-            {
-                uint8_t bank = smc_encoder_get_bank(enc);
-                uint8_t val = smc_encoder_get_value(enc, bank, ev->index);
-                pkt.status = 0xB0;
-                pkt.data1 = enc->configs[bank][ev->index].cc_number;
-                pkt.data2 = val;
-                captured_midi[captured_midi_count++] = pkt;
-            }
-            break;
-
-        case EVENT_BUTTON_DOWN:
-            /* Shift + Pad Bank etc. could switch banks */
-            if (ev->index == BTN_PAD_BANK) {
-                /* Toggle bank */
-                uint8_t b = (smc_encoder_get_bank(enc) + 1) % SMC_NUM_BANKS;
-                smc_encoder_set_bank(enc, b);
-            }
-            break;
-
-        case EVENT_BUTTON_UP:
-        default:
-            break;
+static void sim_send_midi(const smc_midi_raw_msg_t *msg) {
+    if (captured_midi_count < MAX_CAPTURED_MIDI) {
+        captured_midi[captured_midi_count++] = *msg;
     }
 }
 
@@ -101,7 +50,7 @@ static uint16_t hal_read_ch3(void) { return sim_pad_levels[sim_mux_ch]; }
 static uint16_t hal_read_ch4(void) { return sim_pad_levels[sim_mux_ch + 8]; }
 
 int main(void) {
-    printf("Running end-to-end pipeline simulation test...\n");
+    printf("Running integrated end-to-end pipeline simulation test...\n");
 
     /* 1. Initialize queue */
     smc_event_queue_t queue;
@@ -125,7 +74,7 @@ int main(void) {
     smc_matrix_state_t matrix;
     smc_matrix_init(&matrix, &m_hal);
 
-    /* 4. Initialize pad HAL & engine */
+    /* 4. Initialize pad HAL & engine with auto-zero baseline */
     smc_pad_hal_t p_hal = {
         .set_mux_channel = hal_set_mux,
         .settling_delay_us = hal_delay_us,
@@ -133,7 +82,11 @@ int main(void) {
         .read_adc_ch4 = hal_read_ch4
     };
     smc_pad_matrix_t pad_engine;
-    smc_pad_init(&pad_engine, &p_hal, 50, 35, 1000, 3, VELOCITY_CURVE_LINEAR);
+    smc_pad_init(&pad_engine, &p_hal, 50, 25, 1000, 3, VELOCITY_CURVE_LINEAR);
+
+    /* 5. Initialize MIDI Dispatcher */
+    smc_midi_dispatcher_t dispatcher;
+    smc_midi_init(&dispatcher, sim_send_midi);
 
     /* Clear sim arrays */
     for (int i = 0; i < SMC_NUM_PADS; i++) sim_pad_levels[i] = 0;
@@ -157,27 +110,31 @@ int main(void) {
     /* Consume queue in main loop and dispatch to MIDI */
     smc_event_t ev;
     while (smc_queue_pop(&queue, &ev)) {
-        midi_dispatch(&ev, &encoder);
+        smc_midi_process_event(&dispatcher, &encoder, &ev);
     }
 
     /* Verify captured MIDI packets */
     assert(captured_midi_count == 3);
 
     /* 1st packet: Note On for pad 0 (Note 36) */
-    assert(captured_midi[0].status == 0x90);
-    assert(captured_midi[0].data1 == 36);
-    assert(captured_midi[0].data2 > 0);
+    assert(captured_midi[0].bytes[0] == 0x90);
+    assert(captured_midi[0].bytes[1] == 36);
+    assert(captured_midi[0].bytes[2] > 0);
 
     /* 2nd packet: CC for encoder 1 (CC 21, Val 1) */
-    assert(captured_midi[1].status == 0xB0);
-    assert(captured_midi[1].data1 == 21);
-    assert(captured_midi[1].data2 == 1);
+    assert(captured_midi[1].bytes[0] == 0xB0);
+    assert(captured_midi[1].bytes[1] == 21);
+    assert(captured_midi[1].bytes[2] == 1);
 
     /* 3rd packet: Note Off for pad 0 (Note 36) */
-    assert(captured_midi[2].status == 0x80);
-    assert(captured_midi[2].data1 == 36);
-    assert(captured_midi[2].data2 == 0);
+    assert(captured_midi[2].bytes[0] == 0x80);
+    assert(captured_midi[2].bytes[1] == 36);
+    assert(captured_midi[2].bytes[2] == 0);
 
-    printf("End-to-end pipeline simulation test passed successfully!\n");
+    /* Verify no lingering active notes */
+    assert(!smc_midi_is_pad_active(&dispatcher, 0));
+    assert(dispatcher.active_pads_mask == 0);
+
+    printf("Integrated end-to-end pipeline simulation test passed successfully!\n");
     return 0;
 }

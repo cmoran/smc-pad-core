@@ -7,13 +7,14 @@ CC ?= gcc
 CFLAGS ?= -Wall -Wextra -Werror -std=c99 -pedantic -O2 -Iinclude
 BUILD_DIR ?= build
 
-SRCS := src/ring_buffer.c src/encoder.c src/matrix.c src/pad_adc.c src/velocity_curve.c
+SRCS := src/ring_buffer.c src/encoder.c src/matrix.c src/pad_adc.c src/velocity_curve.c src/midi_dispatcher.c
 OBJS := $(patsubst src/%.c,$(BUILD_DIR)/%.o,$(SRCS))
 
 TESTS := $(BUILD_DIR)/test_ring_buffer \
          $(BUILD_DIR)/test_encoder \
          $(BUILD_DIR)/test_matrix \
          $(BUILD_DIR)/test_pad_adc \
+         $(BUILD_DIR)/test_midi_dispatcher \
          $(BUILD_DIR)/test_e2e_pipeline
 
 .PHONY: all test clean
@@ -38,6 +39,9 @@ $(BUILD_DIR)/test_matrix: test/test_matrix.c $(BUILD_DIR)/ring_buffer.o $(BUILD_
 $(BUILD_DIR)/test_pad_adc: test/test_pad_adc.c $(BUILD_DIR)/ring_buffer.o $(BUILD_DIR)/velocity_curve.o $(BUILD_DIR)/pad_adc.o
 	$(CC) $(CFLAGS) $^ -o $@
 
+$(BUILD_DIR)/test_midi_dispatcher: test/test_midi_dispatcher.c $(BUILD_DIR)/ring_buffer.o $(BUILD_DIR)/encoder.o $(BUILD_DIR)/midi_dispatcher.o
+	$(CC) $(CFLAGS) $^ -o $@
+
 $(BUILD_DIR)/test_e2e_pipeline: test/test_e2e_pipeline.c $(OBJS)
 	$(CC) $(CFLAGS) $^ -o $@
 
@@ -47,6 +51,7 @@ test: $(TESTS)
 	@$(BUILD_DIR)/test_encoder
 	@$(BUILD_DIR)/test_matrix
 	@$(BUILD_DIR)/test_pad_adc
+	@$(BUILD_DIR)/test_midi_dispatcher
 	@$(BUILD_DIR)/test_e2e_pipeline
 	@echo "=== All SMC-Pad Core Tests Passed Successfully ==="
 
