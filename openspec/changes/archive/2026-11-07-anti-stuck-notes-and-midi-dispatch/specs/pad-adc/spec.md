@@ -1,9 +1,9 @@
 ## MODIFIED Requirements
 
 ### Requirement: Pad release hysteresis
-The pad engine SHALL maintain hysteresis between the `Note-On` trigger threshold and the `Note-Off` release threshold relative to the tracked resting baseline to prevent false re-triggering and eliminate stuck notes caused by sensor relaxation.
+The pad engine SHALL maintain hysteresis between the `Note-On` trigger threshold and the `Note-Off` release threshold relative to the tracked resting baseline to avoid false re-triggering and eliminate stuck notes caused by sensor relaxation.
 
-#### Scenario: Pad release relative to baseline
+#### Scenario: Pad release
 - **WHEN** an active pad's ADC reading drops below the baseline plus the relative release threshold
 - **THEN** the pad transitions to the idle state, resumes resting baseline tracking, and queues a `Note-Off` event
 
