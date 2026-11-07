@@ -1,0 +1,18 @@
+# Reference repositories & reverse engineering dumps
+reference/
+
+# Build artifacts
+build/
+*.o
+*.a
+*.elf
+*.bin
+*.hex
+*.d
+
+# Editors & OS
+.vscode/
+.idea/
+*.swp
+*~
+.DS_Store
