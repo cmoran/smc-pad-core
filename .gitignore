@@ -1,6 +1,11 @@
 # Reference repositories & reverse engineering dumps
 reference/
 
+# JieLi toolchain & post-build tools (downloaded binaries)
+tools/jl-toolchain/
+tools/jl-postbuild/
+tools/bin/
+
 # Build artifacts
 build/
 *.o
