@@ -15,6 +15,9 @@ void smc_midi_init(smc_midi_dispatcher_t *dispatcher,
     memset(dispatcher, 0, sizeof(smc_midi_dispatcher_t));
     dispatcher->send_midi_msg = send_cb;
     dispatcher->send_ble_msg = NULL;
+    dispatcher->send_uart_msg = NULL;
+    dispatcher->clock_cb = NULL;
+    dispatcher->clock_cb_ctx = NULL;
     dispatcher->config = NULL;
     dispatcher->active_pads_mask = 0;
     dispatcher->shift_active = false;
@@ -43,6 +46,22 @@ void smc_midi_set_ble_sink(smc_midi_dispatcher_t *dispatcher,
                            void (*ble_send_cb)(const smc_midi_raw_msg_t *msg)) {
     if (dispatcher) {
         dispatcher->send_ble_msg = ble_send_cb;
+    }
+}
+
+void smc_midi_set_uart_sink(smc_midi_dispatcher_t *dispatcher,
+                            void (*uart_send_cb)(const smc_midi_raw_msg_t *msg)) {
+    if (dispatcher) {
+        dispatcher->send_uart_msg = uart_send_cb;
+    }
+}
+
+void smc_midi_set_clock_callback(smc_midi_dispatcher_t *dispatcher,
+                                smc_midi_clock_cb clock_cb,
+                                void *ctx) {
+    if (dispatcher) {
+        dispatcher->clock_cb = clock_cb;
+        dispatcher->clock_cb_ctx = ctx;
     }
 }
 
@@ -88,6 +107,31 @@ int8_t smc_midi_get_channel_override(const smc_midi_dispatcher_t *dispatcher) {
     return dispatcher ? dispatcher->channel_override : -1;
 }
 
+static void emit_midi_2byte(smc_midi_dispatcher_t *dispatcher, uint8_t status, uint8_t d1) {
+    if (!dispatcher) return;
+
+    smc_midi_raw_msg_t msg;
+    msg.bytes[0] = status;
+    msg.bytes[1] = d1;
+    msg.bytes[2] = 0;
+    msg.len = 2;
+
+    /* Dispatch to USB-MIDI */
+    if (dispatcher->send_midi_msg) {
+        dispatcher->send_midi_msg(&msg);
+    }
+
+    /* Dispatch concurrently to BLE-MIDI */
+    if (dispatcher->send_ble_msg) {
+        dispatcher->send_ble_msg(&msg);
+    }
+
+    /* Dispatch concurrently to hardware UART (3.5mm TRS) */
+    if (dispatcher->send_uart_msg) {
+        dispatcher->send_uart_msg(&msg);
+    }
+}
+
 static void emit_midi_3byte(smc_midi_dispatcher_t *dispatcher, uint8_t status, uint8_t d1, uint8_t d2) {
     if (!dispatcher) return;
 
@@ -105,6 +149,11 @@ static void emit_midi_3byte(smc_midi_dispatcher_t *dispatcher, uint8_t status, u
     /* Dispatch concurrently to BLE-MIDI */
     if (dispatcher->send_ble_msg) {
         dispatcher->send_ble_msg(&msg);
+    }
+
+    /* Dispatch concurrently to hardware UART (3.5mm TRS) */
+    if (dispatcher->send_uart_msg) {
+        dispatcher->send_uart_msg(&msg);
     }
 }
 
@@ -158,6 +207,32 @@ void smc_midi_process_event(smc_midi_dispatcher_t *dispatcher,
             }
             break;
 
+        case EVENT_PAD_PRESSURE:
+            if (event->index < SMC_NUM_PADS && (dispatcher->active_pads_mask & (1u << event->index))) {
+                uint8_t pad_idx = event->index;
+                uint8_t ch = 0;
+
+                if (dispatcher->sounding_notes[pad_idx] != 0xFF) {
+                    ch = dispatcher->sounding_channels[pad_idx];
+                } else if (dispatcher->config) {
+                    const smc_pad_cfg_t *p_cfg = smc_config_get_active_pad(dispatcher->config, pad_idx);
+                    if (p_cfg) {
+                        ch = p_cfg->channel & 0x0Fu;
+                    }
+                } else {
+                    ch = dispatcher->pad_configs[pad_idx].midi_channel & 0x0Fu;
+                }
+
+                if (dispatcher->channel_override >= 0) {
+                    ch = (uint8_t)(dispatcher->channel_override & 0x0Fu);
+                }
+
+                uint8_t pressure = (event->value > 127) ? 127 : ((event->value < 0) ? 0 : (uint8_t)event->value);
+                /* Emit Channel Pressure (0xD0 | ch) */
+                emit_midi_2byte(dispatcher, (uint8_t)(0xD0u | ch), pressure);
+            }
+            break;
+
         case EVENT_PAD_RELEASE:
             if (event->index < SMC_NUM_PADS) {
                 uint8_t pad_idx = event->index;
@@ -205,21 +280,37 @@ void smc_midi_process_event(smc_midi_dispatcher_t *dispatcher,
                 uint8_t enc_idx = event->index;
                 uint8_t ch = 0;
                 uint8_t cc = 16 + enc_idx;
+                uint8_t mode = 0;
 
                 if (dispatcher->config) {
                     const smc_encoder_cfg_t *e_cfg = smc_config_get_active_encoder(dispatcher->config, enc_idx);
                     if (e_cfg) {
                         ch = e_cfg->channel & 0x0Fu;
                         cc = e_cfg->cc;
+                        mode = e_cfg->mode;
                     }
                 } else {
                     uint8_t bank = smc_encoder_get_bank(encoder_state);
                     ch = encoder_state->configs[bank][enc_idx].midi_channel & 0x0Fu;
                     cc = encoder_state->configs[bank][enc_idx].cc_number;
+                    mode = encoder_state->configs[bank][enc_idx].mode;
                 }
 
-                uint8_t bank = smc_encoder_get_bank(encoder_state);
-                uint8_t val = encoder_state->configs[bank][enc_idx].value;
+                uint8_t val = 0;
+                if (mode == 1) {
+                    /* Relative Signed Bit: +1 = 0x01, -1 = 0x41 */
+                    val = (event->value > 0) ? (uint8_t)event->value : (uint8_t)(0x40u | ((-event->value) & 0x3Fu));
+                } else if (mode == 2) {
+                    /* Relative 2's Complement: +1 = 0x01, -1 = 0x7F */
+                    val = (uint8_t)(event->value & 0x7Fu);
+                } else if (mode == 3) {
+                    /* Relative Binary Offset: +1 = 0x41, -1 = 0x3F */
+                    val = (uint8_t)(64 + event->value);
+                } else {
+                    /* Absolute 0..127 */
+                    uint8_t bank = smc_encoder_get_bank(encoder_state);
+                    val = encoder_state->configs[bank][enc_idx].value;
+                }
 
                 /* Emit Control Change */
                 emit_midi_3byte(dispatcher, (uint8_t)(0xB0u | ch), cc, val);
@@ -301,6 +392,9 @@ void smc_midi_rx_feed_byte(smc_midi_dispatcher_t *dispatcher, uint8_t byte) {
 
     /* Real-time messages (0xF8..0xFF) pass immediately */
     if (byte >= 0xF8u) {
+        if (dispatcher->clock_cb) {
+            dispatcher->clock_cb(byte, dispatcher->clock_cb_ctx);
+        }
         return;
     }
 

@@ -164,6 +164,29 @@ int main(void) {
     assert(ev.index == 5);
     assert(ev.value == 0);
 
+    /* 4. Test Continuous Pad Pressure (Aftertouch) while held */
+    sim_pad_adc_values[4] = 300;
+    smc_pad_scan_step(&engine, &queue, 3000);
+    smc_pad_scan_step(&engine, &queue, 3001);
+    smc_pad_scan_step(&engine, &queue, 3002);
+    smc_pad_scan_step(&engine, &queue, 3003); /* Window expires -> STRIKE */
+    ok = smc_queue_pop(&queue, &ev);
+    assert(ok && ev.type == EVENT_PAD_STRIKE && ev.index == 4);
+
+    /* Increase pressure after strike window */
+    sim_pad_adc_values[4] = 600;
+    smc_pad_scan_step(&engine, &queue, 3025); /* 22ms later (> 20ms rate limit) */
+    assert(!smc_queue_is_empty(&queue));
+    ok = smc_queue_pop(&queue, &ev);
+    assert(ok && ev.type == EVENT_PAD_PRESSURE && ev.index == 4);
+    assert(ev.value > 0);
+
+    /* Release */
+    sim_pad_adc_values[4] = 0;
+    smc_pad_scan_step(&engine, &queue, 3050);
+    ok = smc_queue_pop(&queue, &ev);
+    assert(ok && ev.type == EVENT_PAD_RELEASE && ev.index == 4);
+
     printf("Pad ADC & Velocity Engine unit tests (including Anti-Stuck drift verification) passed!\n");
     return 0;
 }

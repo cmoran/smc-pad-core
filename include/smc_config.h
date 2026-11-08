@@ -40,7 +40,8 @@ typedef struct {
     uint8_t step_size;       /* Increment/Decrement per step (default 1) */
     uint8_t min_val;         /* Clamp min (default 0) */
     uint8_t max_val;         /* Clamp max (default 127) */
-    uint8_t reserved[3];
+    uint8_t mode;            /* 0 = Absolute, 1 = Rel Signed Bit, 2 = Rel 2's Comp, 3 = Rel Bin Offset */
+    uint8_t reserved[2];
 } smc_encoder_cfg_t;
 
 typedef struct {

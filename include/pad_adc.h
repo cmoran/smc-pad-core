@@ -27,6 +27,8 @@ typedef struct {
     uint16_t baseline_adc;          /* Adaptive resting baseline */
     uint16_t peak_adc;              /* Peak pressure captured during window */
     uint32_t strike_start_ticks;
+    uint8_t  last_pressure;         /* Last dispatched pressure (0..127) */
+    uint32_t last_pressure_ticks;   /* Timestamp of last pressure dispatch */
 } smc_pad_channel_state_t;
 
 typedef struct {

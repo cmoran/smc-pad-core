@@ -30,6 +30,8 @@ void smc_pad_init(smc_pad_matrix_t *engine,
         engine->pads[i].baseline_adc = 0;
         engine->pads[i].peak_adc = 0;
         engine->pads[i].strike_start_ticks = 0;
+        engine->pads[i].last_pressure = 0;
+        engine->pads[i].last_pressure_ticks = 0;
     }
 }
 
@@ -96,6 +98,8 @@ static void process_single_pad(smc_pad_matrix_t *engine,
                                                          engine->curve);
 
                 pad->state = PAD_PRESSED;
+                pad->last_pressure = (velocity <= 127) ? velocity : 127;
+                pad->last_pressure_ticks = current_ticks;
 
                 if (queue) {
                     smc_event_t ev = {
@@ -116,6 +120,7 @@ static void process_single_pad(smc_pad_matrix_t *engine,
                 if (sample <= release_threshold) {
                     pad->state = PAD_IDLE;
                     pad->peak_adc = 0;
+                    pad->last_pressure = 0;
 
                     if (queue) {
                         smc_event_t ev = {
@@ -125,6 +130,29 @@ static void process_single_pad(smc_pad_matrix_t *engine,
                             .timestamp = current_ticks
                         };
                         smc_queue_push(queue, &ev);
+                    }
+                } else {
+                    /* Continuous pressure monitoring while held */
+                    if ((current_ticks - pad->last_pressure_ticks) >= 20) { /* Rate limit ~50 Hz */
+                        uint32_t press_range = (engine->max_adc > release_threshold) ? (engine->max_adc - release_threshold) : 1;
+                        uint32_t current_press = (sample > release_threshold) ? (sample - release_threshold) : 0;
+                        uint8_t pressure = (uint8_t)((current_press * 127u) / press_range);
+                        if (pressure > 127) pressure = 127;
+
+                        int16_t diff = (int16_t)pressure - (int16_t)pad->last_pressure;
+                        if (diff >= 2 || diff <= -2) {
+                            pad->last_pressure = pressure;
+                            pad->last_pressure_ticks = current_ticks;
+                            if (queue) {
+                                smc_event_t ev = {
+                                    .type = EVENT_PAD_PRESSURE,
+                                    .index = pad_idx,
+                                    .value = pressure,
+                                    .timestamp = current_ticks
+                                };
+                                smc_queue_push(queue, &ev);
+                            }
+                        }
                     }
                 }
             }

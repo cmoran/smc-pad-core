@@ -60,12 +60,15 @@ The firmware runs a unidirectional, non-blocking, zero-allocation pipeline:
 | Control | Action | Function |
 | :--- | :--- | :--- |
 | **BT** | Press (Button 0) | Toggles **Bluetooth LE MIDI** on/off (Blinks: pairing, Solid: connected, Off: disabled) |
-| **Pads 1–16** | Strike / Release | Velocity-sensitive Note-On / Note-Off with Aftertouch |
-| **Knobs 1–8** | Turn | High-resolution 360° Rotary Encoders (MIDI CC) |
+| **Pads 1–16** | Strike / Press / Release | Velocity-sensitive Note-On, continuous Channel Pressure (Aftertouch), and Note-Off |
+| **Knobs 1–8** | Turn | High-resolution 360° Rotary Encoders (Absolute CC & Relative modes) |
 | **PAD BANK** | Press (Button 1) | Toggles between **Bank A** (LED off) and **Bank B** (LED on) |
 | **KNOB BANK** | Press (Button 2) | Toggles between **Knob Bank A** (LED off) and **Knob Bank B** (LED on) |
-| **LEFT Arrow** | Press (Button 3) | Transpose Octave Down (-12 semitones) |
-| **RIGHT Arrow**| Press (Button 4) | Transpose Octave Up (+12 semitones) |
+| **LEFT Arrow** | Press (Button 3) | Performance mode: Transpose Octave Down (-12 semitones) / DAW mode: Mackie Bank Left |
+| **RIGHT Arrow**| Press (Button 4) | Performance mode: Transpose Octave Up (+12 semitones) / DAW mode: Mackie Bank Right |
+| **PLAY** | Press (Button 5) | DAW Transport: Sends Mackie Control Play (Note 94 / 0x5E on Ch 1) |
+| **STOP** | Press (Button 6) | DAW Transport: Sends Mackie Control Stop (Note 93 / 0x5D on Ch 1) |
+| **RECORD** | Press (Button 7) | DAW Transport: Sends Mackie Control Record (Note 95 / 0x5F on Ch 1) |
 | **NOTE REPEAT**| Press (Button 9) | Toggle Note Repeat on/off (Button LED indicates state) |
 
 ---
@@ -120,18 +123,31 @@ Bottom: [ PAD 1:  Rate 1/4      ] [ PAD 2:  Rate 1/4t    ] [ PAD 3:  Rate 1/8 ] 
 
 ---
 
-## 🌐 WebMIDI Configurator
+## 🌐 WebMIDI Configurator & Musical Profiles
 
 No installation or proprietary driver required. Open [`tools/web-configurator.html`](tools/web-configurator.html) in any Chromium-based browser (Chrome, Chromium, Brave, Edge):
 
-1. Double click [`tools/web-configurator.html`](tools/web-configurator.html) or serve it locally.
+1. Open [`tools/web-configurator.html`](tools/web-configurator.html) in your browser.
 2. Click **Connect SMC-Pad** and allow MIDI / SysEx access.
-3. Visually customize:
-   - Note mappings and channels for all 4 banks.
-   - Rotary encoder CC assignments and limits.
-   - Velocity curves and pad sensitivity thresholds.
+3. **Musical Profiles & Setups**:
+   - Save and name custom configurations (e.g. *"Future Funk Setup"*, *"Cumbia Setup"*, *"Studio DAW Mixing"*, *"MPC Finger Drumming"*).
+   - Instant 1-click **Push to SMC-Pad** to write all 4 banks and settings to device flash.
+   - **JSON Export / Import**: Backup, share, or download setups as `.json` files.
+4. Visually customize:
+   - Note mappings, trigger modes, and channels for all 4 banks.
+   - Rotary encoder CC assignments, relative/absolute modes, and limits.
+   - Velocity curves (Linear, Soft, Hard, Fixed) and pad sensitivity thresholds.
    - Real-time strike & turn visualizers.
-4. Click **Save to Flash** to store settings permanently in non-volatile flash memory.
+5. Click **Save to Flash** to store settings permanently in non-volatile flash memory.
+
+---
+
+## 🔌 Hardware Connectivity (Concurrent 3-Way Output)
+
+All MIDI note, pressure, CC, and transport messages are simultaneously broadcast over three concurrent outputs:
+1. **USB-MIDI**: Class-compliant USB 2.0 full-speed connection with host DAW.
+2. **Wireless BLE-MIDI**: Standard Apple/MMA MIDI over Bluetooth LE advertising as `SMC-PAD`.
+3. **3.5mm TRS MIDI OUT**: Hardware serial MIDI UART1 (`PC5`) at 31,250 baud for direct dawless control of synthesizers, drum machines, and modular gear without a computer.
 
 ---
 

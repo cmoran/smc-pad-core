@@ -17,6 +17,7 @@ extern "C" {
 typedef enum {
     EVENT_NONE = 0,
     EVENT_PAD_STRIKE,      /* Pad struck: index = 0..15, value = velocity (1..127) */
+    EVENT_PAD_PRESSURE,    /* Pad continuous pressure: index = 0..15, value = pressure (0..127) */
     EVENT_PAD_RELEASE,     /* Pad released: index = 0..15, value = 0 */
     EVENT_ENCODER_DELTA,   /* Encoder moved: index = 0..7, value = signed delta (+1, -1) */
     EVENT_BUTTON_DOWN,     /* Button pressed: index = smc_button_id_t */

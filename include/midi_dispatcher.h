@@ -30,6 +30,7 @@ typedef struct {
 
 typedef void (*smc_midi_host_note_cb)(uint8_t channel, uint8_t note, uint8_t velocity, void *ctx);
 typedef void (*smc_midi_sysex_byte_cb)(uint8_t byte, void *ctx);
+typedef void (*smc_midi_clock_cb)(uint8_t msg_type, void *ctx);
 
 typedef struct {
     /* Legacy fallback per-pad mapping */
@@ -53,9 +54,10 @@ typedef struct {
     int8_t  semitone_offset;    /* Semitone offset (-12..+12) */
     int8_t  channel_override;   /* -1 = use per-pad channel, 0..15 = global override */
 
-    /* Dual Output Transport Callbacks */
+    /* Output Transport Callbacks (Concurrent 3-Way Dispatch) */
     void (*send_midi_msg)(const smc_midi_raw_msg_t *msg);     /* Primary / USB */
     void (*send_ble_msg)(const smc_midi_raw_msg_t *msg);      /* Wireless BLE-MIDI */
+    void (*send_uart_msg)(const smc_midi_raw_msg_t *msg);     /* Physical 3.5mm TRS / UART1 */
 
     /* Incoming MIDI Stream Parsing State */
     uint8_t                 rx_running_status;
@@ -65,7 +67,9 @@ typedef struct {
     bool                    rx_in_sysex;
     smc_midi_host_note_cb   host_note_cb;
     smc_midi_sysex_byte_cb  sysex_cb;
+    smc_midi_clock_cb       clock_cb;
     void                   *host_cb_ctx;
+    void                   *clock_cb_ctx;
 } smc_midi_dispatcher_t;
 
 /**
@@ -84,6 +88,19 @@ void smc_midi_set_config(smc_midi_dispatcher_t *dispatcher, const smc_config_t *
  */
 void smc_midi_set_ble_sink(smc_midi_dispatcher_t *dispatcher,
                            void (*ble_send_cb)(const smc_midi_raw_msg_t *msg));
+
+/**
+ * @brief Register hardware UART (3.5mm TRS) output sink callback for concurrent 3-way dispatch.
+ */
+void smc_midi_set_uart_sink(smc_midi_dispatcher_t *dispatcher,
+                            void (*uart_send_cb)(const smc_midi_raw_msg_t *msg));
+
+/**
+ * @brief Register incoming MIDI Realtime Clock callback (0xF8 Tick, 0xFA Start, 0xFB Continue, 0xFC Stop).
+ */
+void smc_midi_set_clock_callback(smc_midi_dispatcher_t *dispatcher,
+                                smc_midi_clock_cb clock_cb,
+                                void *ctx);
 
 /**
  * @brief Register incoming MIDI stream callbacks (Host DAW LED note feedback & SysEx).

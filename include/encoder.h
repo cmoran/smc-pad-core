@@ -15,10 +15,18 @@
 extern "C" {
 #endif
 
+typedef enum {
+    ENC_MODE_ABSOLUTE_CC = 0,             /* Standard absolute 0..127 */
+    ENC_MODE_RELATIVE_SIGNED_BIT,        /* +1 = 0x01, -1 = 0x41 */
+    ENC_MODE_RELATIVE_TWOS_COMPLEMENT,   /* +1 = 0x01, -1 = 0x7F */
+    ENC_MODE_RELATIVE_BINARY_OFFSET      /* +1 = 0x41, -1 = 0x3F */
+} smc_encoder_mode_t;
+
 typedef struct {
     uint8_t cc_number;
     uint8_t midi_channel;   /* 0..15 */
     uint8_t value;          /* 0..127 */
+    uint8_t mode;           /* smc_encoder_mode_t */
 } smc_encoder_config_t;
 
 typedef struct {

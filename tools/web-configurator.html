@@ -262,6 +262,29 @@
     <!-- Right Column: Inspector & Actions -->
     <div style="display: flex; flex-direction: column; gap: 20px;">
       
+      <!-- Musical Profiles & Presets -->
+      <div class="card" style="border: 1px solid rgba(0, 210, 255, 0.4); box-shadow: 0 0 15px rgba(0, 210, 255, 0.1);">
+        <div class="card-title">
+          <span style="color:var(--accent);">Musical Profiles & Setups</span>
+          <button class="btn-sec" style="padding:4px 8px;" onclick="pushAllToDevice()" title="Send entire profile to hardware flash">Push to SMC-Pad</button>
+        </div>
+        <div class="field-group">
+          <label>Active Profile</label>
+          <div style="display:flex; gap: 8px;">
+            <select id="profileSelect" style="flex:1;" onchange="loadSelectedProfile()"></select>
+            <button class="btn-sec" style="padding:6px 10px;" onclick="saveNewProfile()" title="Save current settings as new profile">+ New</button>
+          </div>
+        </div>
+        <div style="display:flex; gap: 8px; margin-top: 4px;">
+          <button class="btn-sec" style="flex:1; padding:6px 8px; font-size:0.75rem;" onclick="saveActiveProfile()">Update Profile</button>
+          <button class="btn-danger" style="padding:6px 10px; font-size:0.75rem;" onclick="deleteActiveProfile()">Delete</button>
+          <button class="btn-sec" style="padding:6px 10px; font-size:0.75rem;" onclick="exportProfilesJSON()">Export JSON</button>
+          <label class="btn-sec" style="padding:6px 10px; font-size:0.75rem; cursor:pointer; display:inline-flex; align-items:center;" title="Import profiles from JSON">
+            Import <input type="file" id="fileImportProfiles" accept=".json" style="display:none;" onchange="importProfilesJSON(event)">
+          </label>
+        </div>
+      </div>
+
       <!-- Pad Inspector -->
       <div class="card">
         <div class="card-title">
@@ -602,7 +625,278 @@
       }
     }
 
+    // Profiles Manager
+    const STORAGE_KEY = "smcpad_profiles_v1";
+
+    const FACTORY_PROFILES = {
+      "Future Funk Setup": {
+        curve: 1, // Soft
+        threshold: 70,
+        banks: [
+          {
+            pads: [
+              { note: 36, channel: 9, mode: 0 }, // Kick
+              { note: 38, channel: 9, mode: 0 }, // Snare
+              { note: 42, channel: 9, mode: 0 }, // Closed Hat
+              { note: 46, channel: 9, mode: 0 }, // Open Hat
+              { note: 39, channel: 9, mode: 0 }, // Clap
+              { note: 37, channel: 9, mode: 0 }, // Side Stick
+              { note: 51, channel: 9, mode: 0 }, // Ride Bell
+              { note: 49, channel: 9, mode: 0 }, // Crash
+              { note: 56, channel: 9, mode: 0 }, // Cowbell
+              { note: 54, channel: 9, mode: 0 }, // Tambourine
+              { note: 48, channel: 0, mode: 0 }, // Synth Bass C2
+              { note: 51, channel: 0, mode: 0 }, // Synth Bass Eb2
+              { note: 53, channel: 0, mode: 0 }, // Synth Bass F2
+              { note: 55, channel: 0, mode: 0 }, // Synth Bass G2
+              { note: 58, channel: 0, mode: 0 }, // Synth Bass Bb2
+              { note: 60, channel: 0, mode: 0 }  // Synth Lead C3
+            ],
+            encoders: [
+              { cc: 74, channel: 0, step: 1, min: 0, max: 127, value: 64 }, // Cutoff
+              { cc: 71, channel: 0, step: 1, min: 0, max: 127, value: 32 }, // Resonance
+              { cc: 73, channel: 0, step: 1, min: 0, max: 127, value: 10 }, // Attack
+              { cc: 75, channel: 0, step: 1, min: 0, max: 127, value: 50 }, // Decay
+              { cc: 93, channel: 0, step: 1, min: 0, max: 127, value: 40 }, // Chorus
+              { cc: 91, channel: 0, step: 1, min: 0, max: 127, value: 45 }, // Reverb
+              { cc: 92, channel: 0, step: 1, min: 0, max: 127, value: 35 }, // Delay
+              { cc: 7,  channel: 0, step: 1, min: 0, max: 127, value: 100 } // Volume
+            ]
+          },
+          ...Array(3).fill(0).map((_, b) => ({
+            pads: Array(16).fill(0).map((_, p) => ({ note: 36 + ((b + 1) * 16) + p, channel: 0, mode: 0 })),
+            encoders: Array(8).fill(0).map((_, e) => ({ cc: 16 + e, channel: 0, step: 1, min: 0, max: 127, value: 0 }))
+          }))
+        ]
+      },
+      "Cumbia & Latin Percussion": {
+        curve: 2, // Hard for hand playing
+        threshold: 90,
+        banks: [
+          {
+            pads: [
+              { note: 36, channel: 9, mode: 0 }, // Tambora / Low Surdo
+              { note: 38, channel: 9, mode: 0 }, // Timbale Rim
+              { note: 42, channel: 9, mode: 0 }, // Shaker / Maraca
+              { note: 46, channel: 9, mode: 0 }, // Guache Open
+              { note: 60, channel: 9, mode: 0 }, // Low Bongo (Hembra)
+              { note: 61, channel: 9, mode: 0 }, // High Bongo (Macho)
+              { note: 62, channel: 9, mode: 0 }, // Conga Mute Slap
+              { note: 63, channel: 9, mode: 0 }, // Conga Open
+              { note: 64, channel: 9, mode: 0 }, // Conga Low Tumbao
+              { note: 65, channel: 9, mode: 0 }, // High Timbale
+              { note: 66, channel: 9, mode: 0 }, // Low Timbale
+              { note: 67, channel: 9, mode: 0 }, // Campana / Mambo Bell
+              { note: 68, channel: 9, mode: 0 }, // Cha-Cha Bell
+              { note: 75, channel: 9, mode: 0 }, // Claves
+              { note: 76, channel: 9, mode: 0 }, // Guiro Up Rasp
+              { note: 77, channel: 9, mode: 0 }  // Guiro Down Long
+            ],
+            encoders: [
+              { cc: 16, channel: 9, step: 1, min: 0, max: 127, value: 64 }, // Conga Tune
+              { cc: 17, channel: 9, step: 1, min: 0, max: 127, value: 64 }, // Timbale Tune
+              { cc: 18, channel: 9, step: 1, min: 0, max: 127, value: 30 }, // Room Reverb
+              { cc: 19, channel: 9, step: 1, min: 0, max: 127, value: 20 }, // Delay Send
+              { cc: 20, channel: 9, step: 1, min: 0, max: 127, value: 64 }, // Shaker Pan
+              { cc: 21, channel: 9, step: 1, min: 0, max: 127, value: 64 }, // Bongo Pan
+              { cc: 22, channel: 9, step: 1, min: 0, max: 127, value: 64 }, // Timbale Pan
+              { cc: 7,  channel: 9, step: 1, min: 0, max: 127, value: 100 } // Master Volume
+            ]
+          },
+          ...Array(3).fill(0).map((_, b) => ({
+            pads: Array(16).fill(0).map((_, p) => ({ note: 36 + ((b + 1) * 16) + p, channel: 9, mode: 0 })),
+            encoders: Array(8).fill(0).map((_, e) => ({ cc: 16 + e, channel: 9, step: 1, min: 0, max: 127, value: 0 }))
+          }))
+        ]
+      },
+      "Studio DAW Mixing (Mackie)": {
+        curve: 0, // Linear
+        threshold: 80,
+        banks: Array(4).fill(0).map((_, b) => ({
+          pads: Array(16).fill(0).map((_, p) => ({ note: 36 + (b * 16) + p, channel: 0, mode: 0 })),
+          encoders: Array(8).fill(0).map((_, e) => ({ cc: 16 + e, channel: 0, step: 1, min: 0, max: 127, value: 64 }))
+        }))
+      },
+      "MPC Finger Drumming": {
+        curve: 0, // Linear
+        threshold: 75,
+        banks: Array(4).fill(0).map((_, b) => ({
+          pads: [
+            { note: 36, channel: 9, mode: 0 }, { note: 37, channel: 9, mode: 0 }, { note: 38, channel: 9, mode: 0 }, { note: 39, channel: 9, mode: 0 },
+            { note: 42, channel: 9, mode: 0 }, { note: 44, channel: 9, mode: 0 }, { note: 46, channel: 9, mode: 0 }, { note: 49, channel: 9, mode: 0 },
+            { note: 41, channel: 9, mode: 0 }, { note: 43, channel: 9, mode: 0 }, { note: 45, channel: 9, mode: 0 }, { note: 47, channel: 9, mode: 0 },
+            { note: 48, channel: 9, mode: 0 }, { note: 50, channel: 9, mode: 0 }, { note: 51, channel: 9, mode: 0 }, { note: 53, channel: 9, mode: 0 }
+          ],
+          encoders: Array(8).fill(0).map((_, e) => ({ cc: 16 + e, channel: 0, step: 1, min: 0, max: 127, value: 0 }))
+        }))
+      }
+    };
+
+    let userProfiles = {};
+
+    function initProfiles() {
+      try {
+        const stored = localStorage.getItem(STORAGE_KEY);
+        if (stored) {
+          userProfiles = JSON.parse(stored);
+        } else {
+          userProfiles = JSON.parse(JSON.stringify(FACTORY_PROFILES));
+          localStorage.setItem(STORAGE_KEY, JSON.stringify(userProfiles));
+        }
+      } catch (err) {
+        userProfiles = JSON.parse(JSON.stringify(FACTORY_PROFILES));
+      }
+      populateProfileDropdown();
+    }
+
+    function populateProfileDropdown(selectedName) {
+      const select = document.getElementById("profileSelect");
+      select.innerHTML = "";
+      const names = Object.keys(userProfiles);
+      names.forEach(name => {
+        const opt = document.createElement("option");
+        opt.value = name;
+        opt.innerText = name;
+        select.appendChild(opt);
+      });
+      if (selectedName && userProfiles[selectedName]) {
+        select.value = selectedName;
+      } else if (names.length > 0) {
+        select.value = names[0];
+      }
+    }
+
+    function loadSelectedProfile() {
+      const name = document.getElementById("profileSelect").value;
+      if (!name || !userProfiles[name]) return;
+      const prof = userProfiles[name];
+      config.curve = prof.curve;
+      config.threshold = prof.threshold;
+      config.banks = JSON.parse(JSON.stringify(prof.banks));
+
+      document.getElementById("inpCurve").value = config.curve;
+      document.getElementById("inpThreshold").value = config.threshold;
+      document.getElementById("lblThreshold").innerText = config.threshold;
+
+      renderPads();
+      renderKnobs();
+      selectPad(selectedPad);
+      logMsg("tx", `Loaded profile: "${name}"`);
+    }
+
+    function saveActiveProfile() {
+      const name = document.getElementById("profileSelect").value;
+      if (!name) return;
+      userProfiles[name] = {
+        curve: parseInt(document.getElementById("inpCurve").value, 10),
+        threshold: parseInt(document.getElementById("inpThreshold").value, 10),
+        banks: JSON.parse(JSON.stringify(config.banks))
+      };
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(userProfiles));
+      logMsg("tx", `Saved current settings to profile "${name}"`);
+      alert(`Profile "${name}" updated successfully!`);
+    }
+
+    function saveNewProfile() {
+      const name = prompt("Enter a name for this new profile / setup (e.g. 'Future Funk Setup', 'Cumbia Setup'):");
+      if (!name || !name.trim()) return;
+      const cleanName = name.trim();
+      userProfiles[cleanName] = {
+        curve: parseInt(document.getElementById("inpCurve").value, 10),
+        threshold: parseInt(document.getElementById("inpThreshold").value, 10),
+        banks: JSON.parse(JSON.stringify(config.banks))
+      };
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(userProfiles));
+      populateProfileDropdown(cleanName);
+      logMsg("tx", `Created new profile "${cleanName}"`);
+    }
+
+    function deleteActiveProfile() {
+      const name = document.getElementById("profileSelect").value;
+      if (!name) return;
+      if (confirm(`Are you sure you want to delete profile "${name}"?`)) {
+        delete userProfiles[name];
+        if (Object.keys(userProfiles).length === 0) {
+          userProfiles = JSON.parse(JSON.stringify(FACTORY_PROFILES));
+        }
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(userProfiles));
+        populateProfileDropdown();
+        loadSelectedProfile();
+        logMsg("tx", `Deleted profile "${name}"`);
+      }
+    }
+
+    function exportProfilesJSON() {
+      const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(userProfiles, null, 2));
+      const downloadAnchor = document.createElement("a");
+      downloadAnchor.setAttribute("href", dataStr);
+      downloadAnchor.setAttribute("download", "smc-pad-profiles.json");
+      document.body.appendChild(downloadAnchor);
+      downloadAnchor.click();
+      downloadAnchor.remove();
+      logMsg("tx", "Exported profiles to smc-pad-profiles.json");
+    }
+
+    function importProfilesJSON(event) {
+      const file = event.target.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = function(e) {
+        try {
+          const imported = JSON.parse(e.target.result);
+          if (typeof imported === "object" && imported !== null) {
+            Object.assign(userProfiles, imported);
+            localStorage.setItem(STORAGE_KEY, JSON.stringify(userProfiles));
+            populateProfileDropdown();
+            loadSelectedProfile();
+            alert("Profiles imported and merged successfully!");
+            logMsg("rx", "Profiles imported successfully from JSON");
+          }
+        } catch (err) {
+          alert("Failed to parse JSON file: " + err.message);
+        }
+      };
+      reader.readAsText(file);
+      event.target.value = "";
+    }
+
+    async function pushAllToDevice() {
+      if (!midiOut) {
+        alert("Please connect SMC-Pad via USB or Bluetooth first!");
+        return;
+      }
+      logMsg("tx", "Pushing entire profile to SMC-Pad...");
+
+      // 1. Send all Pad Mappings across all 4 banks
+      for (let b = 0; b < 4; b++) {
+        for (let p = 0; p < 16; p++) {
+          const pad = config.banks[b].pads[p];
+          sendSysEx([0xF0, 0x7D, 0x01, 0x11, b, p, pad.note, pad.channel, pad.mode, 0xF7]);
+          await new Promise(r => setTimeout(r, 8)); // Pacing to prevent USB buffer overflow
+        }
+      }
+
+      // 2. Send all Encoder Mappings across all 4 banks
+      for (let b = 0; b < 4; b++) {
+        for (let e = 0; e < 8; e++) {
+          const enc = config.banks[b].encoders[e];
+          sendSysEx([0xF0, 0x7D, 0x01, 0x13, b, e, enc.cc, enc.channel, enc.step || 1, enc.min || 0, enc.max || 127, 0xF7]);
+          await new Promise(r => setTimeout(r, 8));
+        }
+      }
+
+      // 3. Send Calibration (Velocity Curve & Threshold)
+      uploadCalibration();
+      await new Promise(r => setTimeout(r, 20));
+
+      // 4. Save to Flash
+      saveToFlash();
+      logMsg("rx", "Push complete! Saved to non-volatile flash memory.");
+      alert("Profile successfully uploaded and stored permanently in SMC-Pad flash memory!");
+    }
+
     // Initial render
+    initProfiles();
     renderPads();
     renderKnobs();
     selectPad(0);

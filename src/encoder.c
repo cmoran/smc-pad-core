@@ -56,6 +56,7 @@ void smc_encoder_init(smc_encoder_state_t *state, uint8_t substeps_per_tick) {
             state->configs[b][i].midi_channel = 0;
             state->configs[b][i].cc_number = (uint8_t)(20 + (b * SMC_NUM_ENCODERS) + i);
             state->configs[b][i].value = 0;
+            state->configs[b][i].mode = ENC_MODE_ABSOLUTE_CC;
         }
     }
 }
