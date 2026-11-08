@@ -235,6 +235,22 @@ void smc_rgb_led_render_shift_status(uint8_t preset_pad,
     smc_rgb_led_set_pad(15, (octave_offset > 0)   ? SMC_COLOR_BLUE : SMC_COLOR_DIM_BLUE);
 }
 
+void smc_rgb_led_render_scale(const smc_scale_config_t *scale_cfg, const uint8_t *pad_notes) {
+    if (!scale_cfg) return;
+
+    for (uint8_t i = 0; i < SMC_RGB_NUM_PADS; i++) {
+        uint8_t note = pad_notes ? pad_notes[i] : (36 + i);
+        uint8_t st = smc_scale_check_note(scale_cfg, note);
+        uint32_t color = SMC_COLOR_SCALE_DIM;
+        if (st == 2) {
+            color = SMC_COLOR_SCALE_ROOT;
+        } else if (st == 1) {
+            color = SMC_COLOR_SCALE_NOTE;
+        }
+        smc_rgb_led_set_pad(i, color);
+    }
+}
+
 void smc_rgb_led_boot_animation(void (*set_fn)(uint8_t pad, uint32_t color),
                                 void (*show_fn)(void),
                                 void (*delay_fn)(uint32_t ms))

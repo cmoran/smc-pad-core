@@ -80,6 +80,30 @@ int main(void) {
     /* Bank 0 value remains untouched */
     assert(smc_encoder_get_value(&enc, 0, 2) == 50);
 
+    /* Test Adaptive Velocity Acceleration */
+    smc_encoder_set_acceleration(&enc, true);
+    assert(smc_encoder_get_acceleration(&enc) == true);
+
+    /* Initial tick at timestamp 1000 ms -> baseline x1 */
+    step = smc_encoder_process_sample(&enc, &queue, 3, 1, 999);
+    step = smc_encoder_process_sample(&enc, &queue, 3, 3, 1000);
+    assert(step == +1);
+
+    /* Rapid tick 15 ms later (< 25 ms threshold) -> x4 multiplier */
+    step = smc_encoder_process_sample(&enc, &queue, 3, 2, 1010);
+    step = smc_encoder_process_sample(&enc, &queue, 3, 0, 1015);
+    assert(step == +4);
+
+    /* Medium tick 40 ms later (< 60 ms threshold) -> x2 multiplier */
+    step = smc_encoder_process_sample(&enc, &queue, 3, 1, 1040);
+    step = smc_encoder_process_sample(&enc, &queue, 3, 3, 1055);
+    assert(step == +2);
+
+    /* Slow tick 100 ms later (>= 60 ms) -> x1 multiplier */
+    step = smc_encoder_process_sample(&enc, &queue, 3, 2, 1140);
+    step = smc_encoder_process_sample(&enc, &queue, 3, 0, 1155);
+    assert(step == +1);
+
     printf("Encoder engine unit tests passed successfully!\n");
     return 0;
 }

@@ -41,6 +41,10 @@ extern "C" {
 #define SMC_CMD_SET_CALIBRATION     0x21u
 #define SMC_CMD_RESP_CALIBRATION    0x22u
 
+#define SMC_CMD_GET_SCALE_CFG       0x24u
+#define SMC_CMD_SET_SCALE_CFG       0x25u
+#define SMC_CMD_RESP_SCALE_CFG      0x26u
+
 #define SMC_CMD_GET_RGB_CFG         0x30u
 #define SMC_CMD_SET_RGB_CFG         0x31u
 #define SMC_CMD_RESP_RGB_CFG        0x32u

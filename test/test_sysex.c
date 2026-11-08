@@ -184,12 +184,49 @@ static void test_malformed_and_interrupted_sysex(void) {
     printf("PASS: test_malformed_and_interrupted_sysex\n");
 }
 
+static void test_scale_sysex(void) {
+    printf("Running test_scale_sysex...\n");
+    smc_config_t cfg;
+    smc_config_set_defaults(&cfg);
+
+    smc_sysex_engine_t sysex;
+    smc_sysex_init(&sysex, &cfg, mock_sysex_tx);
+
+    /* 1. Get scale config (default disabled, C, chromatic) */
+    s_last_resp_len = 0;
+    const uint8_t get_scale[] = { SMC_SYSEX_START, SMC_SYSEX_MFG_ID, SMC_SYSEX_DEV_ID, SMC_CMD_GET_SCALE_CFG, SMC_SYSEX_END };
+    smc_sysex_feed_bytes(&sysex, get_scale, sizeof(get_scale));
+
+    assert(s_last_resp_len == 8);
+    assert(s_last_resp[3] == SMC_CMD_RESP_SCALE_CFG);
+    assert(s_last_resp[4] == 0); /* disabled */
+    assert(s_last_resp[5] == 0); /* C */
+    assert(s_last_resp[6] == 0); /* Chromatic */
+
+    /* 2. Set scale config (enabled=1, root=9 (A), scale=5 (Pentatonic Minor)) */
+    s_last_resp_len = 0;
+    const uint8_t set_scale[] = { SMC_SYSEX_START, SMC_SYSEX_MFG_ID, SMC_SYSEX_DEV_ID, SMC_CMD_SET_SCALE_CFG, 1, 9, 5, SMC_SYSEX_END };
+    smc_sysex_feed_bytes(&sysex, set_scale, sizeof(set_scale));
+
+    assert(s_last_resp_len == 7);
+    assert(s_last_resp[3] == SMC_CMD_RESP_ACK);
+    assert(s_last_resp[4] == SMC_CMD_SET_SCALE_CFG);
+    assert(s_last_resp[5] == SMC_STATUS_OK);
+
+    assert(cfg.scale.enabled == true);
+    assert(cfg.scale.root_note == 9);
+    assert(cfg.scale.scale_type == SCALE_PENTATONIC_MINOR);
+
+    printf("PASS: test_scale_sysex\n");
+}
+
 int main(void) {
     printf("=== Running SMC-Pad Open SysEx Protocol Tests ===\n");
     test_get_dev_info();
     test_pad_map_get_set();
     test_encoder_map_get_set();
     test_calibration_and_rgb();
+    test_scale_sysex();
     test_malformed_and_interrupted_sysex();
     printf("=== All Open SysEx Protocol Tests Passed Successfully! ===\n");
     return 0;

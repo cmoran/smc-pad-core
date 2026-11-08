@@ -34,8 +34,20 @@ typedef struct {
     int8_t  substep_accum[SMC_NUM_ENCODERS];   /* Substep accumulator */
     uint8_t substeps_per_tick;                 /* Configurable resolution (1, 2, or 4) */
     uint8_t active_bank;                       /* 0..3 */
+    uint32_t last_tick_timestamp[SMC_NUM_ENCODERS]; /* Inter-tick timing for acceleration */
+    bool    acceleration_enabled;              /* True if dynamic acceleration is active */
     smc_encoder_config_t configs[SMC_NUM_BANKS][SMC_NUM_ENCODERS];
 } smc_encoder_state_t;
+
+/**
+ * @brief Enable or disable rotary encoder velocity acceleration.
+ */
+void smc_encoder_set_acceleration(smc_encoder_state_t *state, bool enabled);
+
+/**
+ * @brief Check if rotary encoder velocity acceleration is enabled.
+ */
+bool smc_encoder_get_acceleration(const smc_encoder_state_t *state);
 
 /**
  * @brief Initialize encoder engine with default CC maps and banks.

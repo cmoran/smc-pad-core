@@ -28,6 +28,9 @@ void smc_midi_init(smc_midi_dispatcher_t *dispatcher,
     /* Initialize sounding notes to 0xFF (no note currently sounding) */
     memset(dispatcher->sounding_notes, 0xFF, sizeof(dispatcher->sounding_notes));
     memset(dispatcher->sounding_channels, 0, sizeof(dispatcher->sounding_channels));
+    memset(dispatcher->sounding_chord_notes, 0xFF, sizeof(dispatcher->sounding_chord_notes));
+    memset(dispatcher->sounding_chord_count, 0, sizeof(dispatcher->sounding_chord_count));
+    dispatcher->pressure_mode = 0;
 
     /* Default GM drum layout for Bank 0 fallback */
     for (uint8_t i = 0; i < SMC_NUM_PADS; i++) {
@@ -177,6 +180,14 @@ void smc_midi_process_event(smc_midi_dispatcher_t *dispatcher,
                         ch = p_cfg->channel & 0x0Fu;
                         note = p_cfg->note;
                     }
+                    if (dispatcher->config->scale.enabled) {
+                        uint8_t base = 36;
+                        const smc_pad_cfg_t *p0_cfg = smc_config_get_active_pad(dispatcher->config, 0);
+                        if (p0_cfg) {
+                            base = p0_cfg->note;
+                        }
+                        note = smc_scale_get_pad_note(&dispatcher->config->scale, pad_idx, base);
+                    }
                 } else {
                     ch = dispatcher->pad_configs[pad_idx].midi_channel & 0x0Fu;
                     note = dispatcher->pad_configs[pad_idx].note_number;
@@ -195,12 +206,31 @@ void smc_midi_process_event(smc_midi_dispatcher_t *dispatcher,
                     ch = (uint8_t)(dispatcher->channel_override & 0x0Fu);
                 }
 
+                /* Multi-note chord evaluation */
+                uint8_t chord_cnt = 1;
+                const smc_pad_cfg_t *p_cfg_chord = dispatcher->config ? smc_config_get_active_pad(dispatcher->config, pad_idx) : NULL;
+                if (p_cfg_chord && p_cfg_chord->chord_count >= 2 && p_cfg_chord->chord_count <= 4) {
+                    chord_cnt = p_cfg_chord->chord_count;
+                }
+
+                dispatcher->sounding_chord_count[pad_idx] = chord_cnt;
+                dispatcher->sounding_chord_notes[pad_idx][0] = note;
+
                 /* Record sounding note and channel to guarantee matching Note-Off */
                 dispatcher->sounding_notes[pad_idx] = note;
                 dispatcher->sounding_channels[pad_idx] = ch;
 
-                /* Emit Note-On */
+                /* Emit Root Note-On */
                 emit_midi_3byte(dispatcher, (uint8_t)(0x90u | ch), note, vel);
+
+                /* Emit Chord interval Note-Ons */
+                for (uint8_t ci = 1; ci < chord_cnt; ci++) {
+                    int16_t c_note = (int16_t)note + (int16_t)p_cfg_chord->chord_offsets[ci - 1];
+                    if (c_note < 0) c_note = 0;
+                    if (c_note > 127) c_note = 127;
+                    dispatcher->sounding_chord_notes[pad_idx][ci] = (uint8_t)c_note;
+                    emit_midi_3byte(dispatcher, (uint8_t)(0x90u | ch), (uint8_t)c_note, vel);
+                }
 
                 /* Mark pad active in bitmask */
                 dispatcher->active_pads_mask |= (uint16_t)(1u << pad_idx);
@@ -211,6 +241,7 @@ void smc_midi_process_event(smc_midi_dispatcher_t *dispatcher,
             if (event->index < SMC_NUM_PADS && (dispatcher->active_pads_mask & (1u << event->index))) {
                 uint8_t pad_idx = event->index;
                 uint8_t ch = 0;
+                uint8_t p_mode = dispatcher->pressure_mode;
 
                 if (dispatcher->sounding_notes[pad_idx] != 0xFF) {
                     ch = dispatcher->sounding_channels[pad_idx];
@@ -218,6 +249,9 @@ void smc_midi_process_event(smc_midi_dispatcher_t *dispatcher,
                     const smc_pad_cfg_t *p_cfg = smc_config_get_active_pad(dispatcher->config, pad_idx);
                     if (p_cfg) {
                         ch = p_cfg->channel & 0x0Fu;
+                        if (p_cfg->pressure_mode != 0) {
+                            p_mode = p_cfg->pressure_mode;
+                        }
                     }
                 } else {
                     ch = dispatcher->pad_configs[pad_idx].midi_channel & 0x0Fu;
@@ -228,8 +262,15 @@ void smc_midi_process_event(smc_midi_dispatcher_t *dispatcher,
                 }
 
                 uint8_t pressure = (event->value > 127) ? 127 : ((event->value < 0) ? 0 : (uint8_t)event->value);
-                /* Emit Channel Pressure (0xD0 | ch) */
-                emit_midi_2byte(dispatcher, (uint8_t)(0xD0u | ch), pressure);
+
+                if (p_mode == 1) {
+                    /* Polyphonic Key Pressure (0xA0 | ch, note, pressure) */
+                    uint8_t note = (dispatcher->sounding_notes[pad_idx] != 0xFF) ? dispatcher->sounding_notes[pad_idx] : (36 + pad_idx);
+                    emit_midi_3byte(dispatcher, (uint8_t)(0xA0u | ch), note, pressure);
+                } else {
+                    /* Channel Pressure (0xD0 | ch, pressure) */
+                    emit_midi_2byte(dispatcher, (uint8_t)(0xD0u | ch), pressure);
+                }
             }
             break;
 
@@ -267,8 +308,18 @@ void smc_midi_process_event(smc_midi_dispatcher_t *dispatcher,
                     }
                 }
 
-                /* Emit Note-Off */
-                emit_midi_3byte(dispatcher, (uint8_t)(0x80u | ch), note, 0);
+                /* Release all sounding notes of chord or single note */
+                uint8_t c_cnt = dispatcher->sounding_chord_count[pad_idx];
+                if (c_cnt >= 2) {
+                    for (uint8_t ci = 0; ci < c_cnt; ci++) {
+                        emit_midi_3byte(dispatcher, (uint8_t)(0x80u | ch), dispatcher->sounding_chord_notes[pad_idx][ci], 0);
+                    }
+                    dispatcher->sounding_chord_count[pad_idx] = 0;
+                } else {
+                    /* Emit single Note-Off */
+                    emit_midi_3byte(dispatcher, (uint8_t)(0x80u | ch), note, 0);
+                    dispatcher->sounding_chord_count[pad_idx] = 0;
+                }
 
                 /* Clear pad bit */
                 dispatcher->active_pads_mask &= (uint16_t)~(1u << pad_idx);
@@ -371,13 +422,32 @@ void smc_midi_panic(smc_midi_dispatcher_t *dispatcher) {
                 }
             }
 
-            emit_midi_3byte(dispatcher, (uint8_t)(0x80u | ch), note, 0);
+            uint8_t c_cnt = dispatcher->sounding_chord_count[i];
+            if (c_cnt >= 2) {
+                for (uint8_t ci = 0; ci < c_cnt; ci++) {
+                    emit_midi_3byte(dispatcher, (uint8_t)(0x80u | ch), dispatcher->sounding_chord_notes[i][ci], 0);
+                }
+                dispatcher->sounding_chord_count[i] = 0;
+            } else {
+                emit_midi_3byte(dispatcher, (uint8_t)(0x80u | ch), note, 0);
+                dispatcher->sounding_chord_count[i] = 0;
+            }
         }
         dispatcher->sounding_notes[i] = 0xFF;
     }
 
     /* 3. Clear active mask */
     dispatcher->active_pads_mask = 0;
+}
+
+void smc_midi_set_pressure_mode(smc_midi_dispatcher_t *dispatcher, uint8_t mode) {
+    if (dispatcher) {
+        dispatcher->pressure_mode = mode;
+    }
+}
+
+uint8_t smc_midi_get_pressure_mode(const smc_midi_dispatcher_t *dispatcher) {
+    return dispatcher ? dispatcher->pressure_mode : 0;
 }
 
 bool smc_midi_is_pad_active(const smc_midi_dispatcher_t *dispatcher, uint8_t pad_idx) {

@@ -85,6 +85,11 @@ void smc_config_set_defaults(smc_config_t *cfg) {
     cfg->scan_window_ms = 3;
     cfg->velocity_curve = (uint8_t)VELOCITY_CURVE_LINEAR;
 
+    /* Scale Defaults */
+    cfg->scale.enabled = false;
+    cfg->scale.root_note = 0; /* C */
+    cfg->scale.scale_type = SCALE_CHROMATIC;
+
     /* Visual Defaults */
     cfg->pad_idle_color = 0x000020u; /* Dim Blue */
     cfg->pad_hit_color  = 0x00FF00u; /* Bright Green */
@@ -110,11 +115,14 @@ bool smc_config_validate(const smc_config_t *cfg) {
     if (cfg->dynamic_range == 0) return false;
     if (cfg->scan_window_ms == 0 || cfg->scan_window_ms > 20) return false;
     if (cfg->led_mode > SMC_LED_MODE_HOST) return false;
+    if (cfg->scale.root_note > 11 || cfg->scale.scale_type >= SCALE_COUNT) return false;
 
     for (uint8_t b = 0; b < SMC_CONFIG_BANKS; b++) {
         for (uint8_t p = 0; p < SMC_CONFIG_PADS; p++) {
             if (cfg->pads[b][p].note > 127) return false;
             if (cfg->pads[b][p].channel > 15) return false;
+            if (cfg->pads[b][p].chord_count > 4) return false;
+            if (cfg->pads[b][p].pressure_mode > 1) return false;
         }
         for (uint8_t e = 0; e < SMC_CONFIG_ENCODERS; e++) {
             if (cfg->encoders[b][e].cc > 127) return false;
@@ -218,4 +226,101 @@ const smc_pad_cfg_t *smc_config_get_active_pad(const smc_config_t *cfg, uint8_t 
 const smc_encoder_cfg_t *smc_config_get_active_encoder(const smc_config_t *cfg, uint8_t enc_idx) {
     if (!cfg || enc_idx >= SMC_CONFIG_ENCODERS) return NULL;
     return &cfg->encoders[g_active_encoder_bank][enc_idx];
+}
+
+/* ========================================================================= */
+/* Scale Engine Interval Definitions & Mappers                               */
+/* ========================================================================= */
+
+static const uint8_t s_scale_chromatic[12]        = { 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11 };
+static const uint8_t s_scale_major[7]            = { 0, 2, 4, 5, 7, 9, 11 };
+static const uint8_t s_scale_natural_minor[7]    = { 0, 2, 3, 5, 7, 8, 10 };
+static const uint8_t s_scale_dorian[7]           = { 0, 2, 3, 5, 7, 9, 10 };
+static const uint8_t s_scale_mixolydian[7]       = { 0, 2, 4, 5, 7, 9, 10 };
+static const uint8_t s_scale_pentatonic_minor[5] = { 0, 3, 5, 7, 10 };
+static const uint8_t s_scale_pentatonic_major[5] = { 0, 2, 4, 7, 9 };
+static const uint8_t s_scale_blues[6]            = { 0, 3, 5, 6, 7, 10 };
+
+const uint8_t *smc_scale_get_intervals(smc_scale_type_t scale, uint8_t *len_out) {
+    switch (scale) {
+        case SCALE_MAJOR:
+            if (len_out) *len_out = 7;
+            return s_scale_major;
+        case SCALE_NATURAL_MINOR:
+            if (len_out) *len_out = 7;
+            return s_scale_natural_minor;
+        case SCALE_DORIAN:
+            if (len_out) *len_out = 7;
+            return s_scale_dorian;
+        case SCALE_MIXOLYDIAN:
+            if (len_out) *len_out = 7;
+            return s_scale_mixolydian;
+        case SCALE_PENTATONIC_MINOR:
+            if (len_out) *len_out = 5;
+            return s_scale_pentatonic_minor;
+        case SCALE_PENTATONIC_MAJOR:
+            if (len_out) *len_out = 5;
+            return s_scale_pentatonic_major;
+        case SCALE_BLUES:
+            if (len_out) *len_out = 6;
+            return s_scale_blues;
+        case SCALE_CHROMATIC:
+        default:
+            if (len_out) *len_out = 12;
+            return s_scale_chromatic;
+    }
+}
+
+uint8_t smc_scale_get_pad_note(const smc_scale_config_t *scale_cfg, uint8_t pad_idx, uint8_t base_note) {
+    if (!scale_cfg || !scale_cfg->enabled || scale_cfg->scale_type == SCALE_CHROMATIC) {
+        return (uint8_t)(base_note + pad_idx);
+    }
+
+    uint8_t len = 0;
+    const uint8_t *intervals = smc_scale_get_intervals(scale_cfg->scale_type, &len);
+    if (!intervals || len == 0) {
+        return (uint8_t)(base_note + pad_idx);
+    }
+
+    uint8_t root = scale_cfg->root_note % 12;
+    uint8_t base_octave = base_note / 12;
+    uint8_t root_base = (base_octave * 12) + root;
+
+    uint8_t oct = pad_idx / len;
+    uint8_t deg = pad_idx % len;
+
+    int note = root_base + intervals[deg] + (oct * 12);
+    if (note < 0) note = 0;
+    if (note > 127) note = 127;
+
+    return (uint8_t)note;
+}
+
+uint8_t smc_scale_check_note(const smc_scale_config_t *scale_cfg, uint8_t note) {
+    if (!scale_cfg) return 1;
+
+    uint8_t root = scale_cfg->root_note % 12;
+    uint8_t semitone = (note + 12 - root) % 12;
+
+    if (semitone == 0) {
+        return 2; /* Root Note */
+    }
+
+    if (!scale_cfg->enabled || scale_cfg->scale_type == SCALE_CHROMATIC) {
+        return 1; /* In-scale */
+    }
+
+    uint8_t len = 0;
+    const uint8_t *intervals = smc_scale_get_intervals(scale_cfg->scale_type, &len);
+    if (!intervals || len == 0) {
+        return 1;
+    }
+
+    for (uint8_t i = 1; i < len; i++) {
+        if (intervals[i] == semitone) {
+            return 1; /* In-scale */
+        }
+    }
+
+    return 0; /* Out-of-scale */
 }

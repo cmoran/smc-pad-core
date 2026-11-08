@@ -6,6 +6,8 @@
 #include <stdio.h>
 #include <assert.h>
 #include "midi_dispatcher.h"
+#include "smc_config.h"
+#include "rgb_led.h"
 
 #define MAX_SIM_MSGS 64
 static smc_midi_raw_msg_t sim_msgs[MAX_SIM_MSGS];
@@ -230,6 +232,100 @@ int main(void) {
     assert(clock_ticks == 2);
     smc_midi_rx_feed_byte(&dispatcher, 0xFC); /* Stop */
     assert(last_clock_cmd == 0xFC);
+
+    /* 11. Test Multi-Note Chord Voicing & Sounding Tracking */
+    smc_config_t cfg;
+    smc_config_set_defaults(&cfg);
+    cfg.pads[0][4].note = 60;
+    cfg.pads[0][4].chord_count = 4;
+    cfg.pads[0][4].chord_offsets[0] = 3;  /* +3 = Eb (63) */
+    cfg.pads[0][4].chord_offsets[1] = 7;  /* +7 = G (67) */
+    cfg.pads[0][4].chord_offsets[2] = 10; /* +10 = Bb (70) */
+    dispatcher.config = &cfg;
+
+    sim_msg_count = 0;
+    smc_event_t ev_chord_on = { .type = EVENT_PAD_STRIKE, .index = 4, .value = 105, .timestamp = 1000 };
+    smc_midi_process_event(&dispatcher, &encoder, &ev_chord_on);
+
+    assert(sim_msg_count == 4);
+    assert(sim_msgs[0].bytes[0] == 0x90 && sim_msgs[0].bytes[1] == 60 && sim_msgs[0].bytes[2] == 105);
+    assert(sim_msgs[1].bytes[0] == 0x90 && sim_msgs[1].bytes[1] == 63 && sim_msgs[1].bytes[2] == 105);
+    assert(sim_msgs[2].bytes[0] == 0x90 && sim_msgs[2].bytes[1] == 67 && sim_msgs[2].bytes[2] == 105);
+    assert(sim_msgs[3].bytes[0] == 0x90 && sim_msgs[3].bytes[1] == 70 && sim_msgs[3].bytes[2] == 105);
+    assert(dispatcher.sounding_chord_count[4] == 4);
+
+    sim_msg_count = 0;
+    smc_event_t ev_chord_off = { .type = EVENT_PAD_RELEASE, .index = 4, .value = 0, .timestamp = 1050 };
+    smc_midi_process_event(&dispatcher, &encoder, &ev_chord_off);
+
+    assert(sim_msg_count == 4);
+    assert(sim_msgs[0].bytes[0] == 0x80 && sim_msgs[0].bytes[1] == 60 && sim_msgs[0].bytes[2] == 0);
+    assert(sim_msgs[1].bytes[0] == 0x80 && sim_msgs[1].bytes[1] == 63 && sim_msgs[1].bytes[2] == 0);
+    assert(sim_msgs[2].bytes[0] == 0x80 && sim_msgs[2].bytes[1] == 67 && sim_msgs[2].bytes[2] == 0);
+    assert(sim_msgs[3].bytes[0] == 0x80 && sim_msgs[3].bytes[1] == 70 && sim_msgs[3].bytes[2] == 0);
+    assert(dispatcher.sounding_chord_count[4] == 0);
+
+    /* 12. Test Polyphonic Key Pressure (0xA0) */
+    cfg.pads[0][0].note = 36;
+    cfg.pads[0][0].chord_count = 1;
+    smc_event_t ev_p0_on = { .type = EVENT_PAD_STRIKE, .index = 0, .value = 90, .timestamp = 1100 };
+    smc_midi_process_event(&dispatcher, &encoder, &ev_p0_on);
+
+    smc_midi_set_pressure_mode(&dispatcher, 1);
+    assert(smc_midi_get_pressure_mode(&dispatcher) == 1);
+
+    sim_msg_count = 0;
+    smc_event_t ev_poly_press = { .type = EVENT_PAD_PRESSURE, .index = 0, .value = 92, .timestamp = 1120 };
+    smc_midi_process_event(&dispatcher, &encoder, &ev_poly_press);
+
+    assert(sim_msg_count == 1);
+    assert(sim_msgs[0].bytes[0] == 0xA0); /* Polyphonic Key Pressure Ch 1 */
+    assert(sim_msgs[0].bytes[1] == 36);   /* Target note */
+    assert(sim_msgs[0].bytes[2] == 92);   /* Pressure */
+
+    smc_event_t ev_p0_off = { .type = EVENT_PAD_RELEASE, .index = 0, .value = 0, .timestamp = 1150 };
+    smc_midi_process_event(&dispatcher, &encoder, &ev_p0_off);
+    smc_midi_set_pressure_mode(&dispatcher, 0);
+
+    /* 13. Test Musical Scale and Key Quantization */
+    cfg.pads[0][4].chord_count = 1;
+    cfg.scale.enabled = true;
+    cfg.scale.root_note = 0; /* C */
+    cfg.scale.scale_type = SCALE_PENTATONIC_MAJOR; /* 0, 2, 4, 7, 9 */
+    cfg.pads[0][0].note = 48; /* C3 */
+
+    uint8_t expected_pentatonic[5] = { 48, 50, 52, 55, 57 };
+    for (uint8_t p = 0; p < 5; p++) {
+        sim_msg_count = 0;
+        smc_event_t ev_scale_strike = { .type = EVENT_PAD_STRIKE, .index = p, .value = 100, .timestamp = 1200 + p * 10 };
+        smc_midi_process_event(&dispatcher, &encoder, &ev_scale_strike);
+        assert(sim_msg_count == 1);
+        assert(sim_msgs[0].bytes[0] == 0x90);
+        assert(sim_msgs[0].bytes[1] == expected_pentatonic[p]);
+
+        smc_event_t ev_scale_release = { .type = EVENT_PAD_RELEASE, .index = p, .value = 0, .timestamp = 1205 + p * 10 };
+        smc_midi_process_event(&dispatcher, &encoder, &ev_scale_release);
+    }
+
+    /* 14. Test Visual RGB Scale Key Illumination */
+    smc_rgb_led_init();
+    assert(smc_scale_check_note(&cfg.scale, 48) == 2); /* Root note C */
+    assert(smc_scale_check_note(&cfg.scale, 50) == 1); /* In-scale note D */
+    assert(smc_scale_check_note(&cfg.scale, 49) == 0); /* Out-of-scale note C# */
+
+    uint8_t test_notes[16] = {
+        48, 50, 52, 55, /* C, D, E, G */
+        57, 60, 49, 51, /* A, C, C# (out), D# (out) */
+        0, 0, 0, 0,
+        0, 0, 0, 0
+    };
+    smc_rgb_led_render_scale(&cfg.scale, test_notes);
+
+    assert(smc_rgb_led_get_pad(0) == SMC_COLOR_SCALE_ROOT); /* Pad 0 (48 = C) is Gold */
+    assert(smc_rgb_led_get_pad(1) == SMC_COLOR_SCALE_NOTE); /* Pad 1 (50 = D) is Cyan */
+    assert(smc_rgb_led_get_pad(5) == SMC_COLOR_SCALE_ROOT); /* Pad 5 (60 = C) is Gold */
+    assert(smc_rgb_led_get_pad(6) == SMC_COLOR_SCALE_DIM);  /* Pad 6 (49 = C#) is Dim */
+    assert(smc_rgb_led_get_pad(7) == SMC_COLOR_SCALE_DIM);  /* Pad 7 (51 = D#) is Dim */
 
     printf("MIDI Dispatcher unit tests passed successfully!\n");
     return 0;

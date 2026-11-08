@@ -13,6 +13,7 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include "smc_hw.h"
+#include "smc_config.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -40,6 +41,9 @@ extern "C" {
 #define SMC_COLOR_DIM_AMBER     0x201000u
 #define SMC_COLOR_DIM_MAGENTA   0x200020u
 #define SMC_COLOR_DIM_CYAN      0x002020u
+#define SMC_COLOR_SCALE_ROOT    0xFFB300u  /* Vibrant Gold / Amber */
+#define SMC_COLOR_SCALE_NOTE    0x00E5FFu  /* Bright Cyan / Aqua */
+#define SMC_COLOR_SCALE_DIM     0x000510u  /* Dim Out-of-Scale */
 
 typedef struct {
     uint32_t idle_color;
@@ -130,6 +134,15 @@ void smc_rgb_led_render_shift_status(uint8_t preset_pad,
                                      uint8_t velocity_curve,
                                      int8_t octave_offset,
                                      int8_t semitone_offset);
+
+/**
+ * @brief Render scale degrees across the 16 pads.
+ * Root notes glow Gold (0xFFB300), in-scale notes glow Cyan (0x00E5FF), out-of-scale pads glow Dim (0x000510).
+ *
+ * @param scale_cfg Scale configuration (root_note, scale_type, enabled)
+ * @param pad_notes Array of 16 MIDI note numbers assigned to the pads (or NULL for default chromatic)
+ */
+void smc_rgb_led_render_scale(const smc_scale_config_t *scale_cfg, const uint8_t *pad_notes);
 
 /**
  * @brief Perform the startup boot animation (center-outward spiral flare).

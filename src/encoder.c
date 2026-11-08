@@ -44,10 +44,12 @@ void smc_encoder_init(smc_encoder_state_t *state, uint8_t substeps_per_tick) {
     }
     state->active_bank = 0;
     state->substeps_per_tick = (substeps_per_tick > 0) ? substeps_per_tick : 2;
+    state->acceleration_enabled = false;
 
     for (uint8_t i = 0; i < SMC_NUM_ENCODERS; i++) {
         state->last_gray_state[i] = 0;
         state->substep_accum[i] = 0;
+        state->last_tick_timestamp[i] = 0;
     }
 
     /* Initialize default CCs: Bank 0: CC 20..27, Bank 1: CC 28..35, etc. */
@@ -111,6 +113,18 @@ int8_t smc_encoder_process_sample(smc_encoder_state_t *state,
     }
 
     if (tick_step != 0) {
+        if (state->acceleration_enabled) {
+            uint32_t dt = timestamp - state->last_tick_timestamp[enc_idx];
+            state->last_tick_timestamp[enc_idx] = timestamp;
+            int8_t mult = 1;
+            if (dt < 25) {
+                mult = 4;
+            } else if (dt < 60) {
+                mult = 2;
+            }
+            tick_step *= mult;
+        }
+
         uint8_t bank = state->active_bank;
         int16_t cur_val = state->configs[bank][enc_idx].value;
         int16_t new_val = cur_val + tick_step;
@@ -136,6 +150,16 @@ int8_t smc_encoder_process_sample(smc_encoder_state_t *state,
     }
 
     return tick_step;
+}
+
+void smc_encoder_set_acceleration(smc_encoder_state_t *state, bool enabled) {
+    if (state) {
+        state->acceleration_enabled = enabled;
+    }
+}
+
+bool smc_encoder_get_acceleration(const smc_encoder_state_t *state) {
+    return state ? state->acceleration_enabled : false;
 }
 
 uint8_t smc_encoder_get_value(const smc_encoder_state_t *state, uint8_t bank, uint8_t enc_idx) {

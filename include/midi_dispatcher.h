@@ -46,6 +46,13 @@ typedef struct {
     uint8_t sounding_notes[SMC_NUM_PADS];
     uint8_t sounding_channels[SMC_NUM_PADS];
 
+    /* Multi-note chord tracking (up to 4 sounding notes per pad) */
+    uint8_t sounding_chord_notes[SMC_NUM_PADS][4];
+    uint8_t sounding_chord_count[SMC_NUM_PADS];
+
+    /* Pressure mode: 0 = Channel Pressure (0xD0), 1 = Polyphonic Aftertouch (0xA0) */
+    uint8_t pressure_mode;
+
     /* Shift state tracker */
     bool shift_active;
 
@@ -161,6 +168,16 @@ void smc_midi_set_channel_override(smc_midi_dispatcher_t *dispatcher, int8_t cha
  * @brief Get current global MIDI channel override.
  */
 int8_t smc_midi_get_channel_override(const smc_midi_dispatcher_t *dispatcher);
+
+/**
+ * @brief Set global aftertouch pressure mode: 0 = Channel Pressure (0xD0), 1 = Poly Key Pressure (0xA0).
+ */
+void smc_midi_set_pressure_mode(smc_midi_dispatcher_t *dispatcher, uint8_t mode);
+
+/**
+ * @brief Get global aftertouch pressure mode.
+ */
+uint8_t smc_midi_get_pressure_mode(const smc_midi_dispatcher_t *dispatcher);
 
 /**
  * @brief Check if a pad is currently sounding (active Note-On without Note-Off).

@@ -86,6 +86,18 @@ static void handle_set_pad_map(smc_sysex_engine_t *engine, const uint8_t *payloa
     engine->cfg->pads[bank][pad].channel = channel;
     engine->cfg->pads[bank][pad].mode = mode;
 
+    if (len >= 6) {
+        engine->cfg->pads[bank][pad].chord_count = (payload[5] > 4) ? 4 : payload[5];
+    }
+    if (len >= 9) {
+        engine->cfg->pads[bank][pad].chord_offsets[0] = (int8_t)((int16_t)payload[6] - 64);
+        engine->cfg->pads[bank][pad].chord_offsets[1] = (int8_t)((int16_t)payload[7] - 64);
+        engine->cfg->pads[bank][pad].chord_offsets[2] = (int8_t)((int16_t)payload[8] - 64);
+    }
+    if (len >= 10) {
+        engine->cfg->pads[bank][pad].pressure_mode = (payload[9] > 1) ? 1 : payload[9];
+    }
+
     send_ack(engine, SMC_CMD_SET_PAD_MAP, SMC_STATUS_OK);
 }
 
@@ -145,6 +157,36 @@ static void handle_set_enc_map(smc_sysex_engine_t *engine, const uint8_t *payloa
     engine->cfg->encoders[bank][enc].max_val = max_val;
 
     send_ack(engine, SMC_CMD_SET_ENC_MAP, SMC_STATUS_OK);
+}
+
+static void handle_get_scale_cfg(smc_sysex_engine_t *engine) {
+    if (!engine->cfg || !engine->tx_fn) return;
+    uint8_t resp[8] = {
+        SMC_SYSEX_START,
+        SMC_SYSEX_MFG_ID,
+        SMC_SYSEX_DEV_ID,
+        SMC_CMD_RESP_SCALE_CFG,
+        engine->cfg->scale.enabled ? 1 : 0,
+        engine->cfg->scale.root_note & 0x7Fu,
+        (uint8_t)engine->cfg->scale.scale_type & 0x7Fu,
+        SMC_SYSEX_END
+    };
+    engine->tx_fn(resp, sizeof(resp));
+}
+
+static void handle_set_scale_cfg(smc_sysex_engine_t *engine, const uint8_t *payload, uint8_t len) {
+    if (len < 3 || !engine->cfg) {
+        send_ack(engine, SMC_CMD_SET_SCALE_CFG, SMC_STATUS_ERR_PARAM);
+        return;
+    }
+    if (payload[1] > 11 || payload[2] >= SCALE_COUNT) {
+        send_ack(engine, SMC_CMD_SET_SCALE_CFG, SMC_STATUS_ERR_PARAM);
+        return;
+    }
+    engine->cfg->scale.enabled = (payload[0] != 0);
+    engine->cfg->scale.root_note = payload[1];
+    engine->cfg->scale.scale_type = (smc_scale_type_t)payload[2];
+    send_ack(engine, SMC_CMD_SET_SCALE_CFG, SMC_STATUS_OK);
 }
 
 static void handle_get_calibration(smc_sysex_engine_t *engine) {
@@ -275,6 +317,12 @@ static void process_sysex_packet(smc_sysex_engine_t *engine) {
         break;
     case SMC_CMD_SET_CALIBRATION:
         handle_set_calibration(engine, payload, payload_len);
+        break;
+    case SMC_CMD_GET_SCALE_CFG:
+        handle_get_scale_cfg(engine);
+        break;
+    case SMC_CMD_SET_SCALE_CFG:
+        handle_set_scale_cfg(engine, payload, payload_len);
         break;
     case SMC_CMD_GET_RGB_CFG:
         handle_get_rgb_cfg(engine);

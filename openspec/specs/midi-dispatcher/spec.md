@@ -73,3 +73,11 @@ The MIDI dispatcher SHALL parse incoming System Realtime messages (0xF8 Timing C
 #### Scenario: Timing clock byte received
 - **WHEN** byte 0xF8 is received in the incoming stream
 - **THEN** the registered clock tick callback is invoked immediately without corrupting any in-progress channel voice message buffer.
+
+### Requirement: Polyphonic Key Pressure Support
+The MIDI dispatcher SHALL support Polyphonic Key Pressure (0xA0) as an alternative to Channel Pressure (0xD0), dispatching pressure values targeted to the specific note assigned to the held pad.
+
+#### Scenario: Dispatching Polyphonic Key Pressure
+- **GIVEN** dispatcher pressure mode is set to Polyphonic Key Pressure
+- **WHEN** an `EVENT_PAD_PRESSURE` event is dequeued for a pad with sounding note 60
+- **THEN** a MIDI 3-byte message `0xA0 | ch`, `60`, `pressure` is emitted.

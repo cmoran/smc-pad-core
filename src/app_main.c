@@ -381,6 +381,8 @@ static void hal_send_sysex_packet(const uint8_t *data, size_t len) {
     smc_ble_midi_send_sysex(&g_ble_engine, data, (uint16_t)len, g_system_ticks);
 }
 
+static uint32_t get_pad_idle_color(uint8_t p);
+
 static void hal_host_note_feedback(uint8_t ch, uint8_t note, uint8_t vel, void *ctx) {
     (void)ch;
     (void)ctx;
@@ -393,7 +395,7 @@ static void hal_host_note_feedback(uint8_t ch, uint8_t note, uint8_t vel, void *
                 ? ((g_config.led_mode == SMC_LED_MODE_HOST)
                     ? (((uint32_t)vel * 2u) << 8) | vel
                     : pal->hit_color)
-                : pal->idle_color;
+                : get_pad_idle_color(p);
 #ifndef SMC_HOST_TEST
             smcpad_rgb_set(p, color);
             smcpad_rgb_show();
@@ -414,7 +416,37 @@ static void hal_host_sysex_feed(uint8_t b, void *ctx) {
 /* Application Entry Points (setup / loop)                                   */
 /* ========================================================================= */
 
+static uint32_t get_pad_idle_color(uint8_t p) {
+    if (g_config.scale.enabled) {
+        uint8_t base = g_config.pads[g_pad_bank][0].note;
+        uint8_t note = smc_scale_get_pad_note(&g_config.scale, p, base);
+        uint8_t st = smc_scale_check_note(&g_config.scale, note);
+        if (st == 2) return SMC_COLOR_SCALE_ROOT;
+        if (st == 1) return SMC_COLOR_SCALE_NOTE;
+        return SMC_COLOR_SCALE_DIM;
+    }
+    return smc_rgb_led_get_bank_palette(g_pad_bank)->idle_color;
+}
+
 static void restore_bank_leds(void) {
+    if (g_config.scale.enabled) {
+        uint8_t notes[SMC_NUM_PADS];
+        uint8_t base = g_config.pads[g_pad_bank][0].note;
+        for (uint8_t p = 0; p < SMC_NUM_PADS; p++) {
+            notes[p] = smc_scale_get_pad_note(&g_config.scale, p, base);
+        }
+        smc_rgb_led_render_scale(&g_config.scale, notes);
+#ifndef SMC_HOST_TEST
+        for (int p = 0; p < SMC_NUM_PADS; p++) {
+            smcpad_rgb_set(p, smc_rgb_led_get_pad(p));
+        }
+        smcpad_rgb_show();
+#else
+        smc_rgb_led_show();
+#endif
+        return;
+    }
+
 #ifndef SMC_HOST_TEST
     const smc_bank_palette_t *p_pal = smc_rgb_led_get_bank_palette(g_pad_bank);
     for (int p = 0; p < SMC_NUM_PADS; p++) {
@@ -607,7 +639,7 @@ void loop(void) {
                             .timestamp = now
                         };
                         smc_midi_process_event(&g_midi_engine, &g_encoder_engine, &ev_off);
-                        smcpad_rgb_set(p, smc_rgb_led_get_bank_palette(g_pad_bank)->idle_color);
+                        smcpad_rgb_set(p, get_pad_idle_color(p));
                     }
                 }
                 smcpad_rgb_show();
@@ -737,7 +769,7 @@ void loop(void) {
                         ev.value = 0;
                         ev.timestamp = app_get_millis();
                         smc_midi_process_event(&g_midi_engine, &g_encoder_engine, &ev);
-                        smcpad_rgb_set(hw_ev.index, smc_rgb_led_get_bank_palette(g_pad_bank)->idle_color);
+                        smcpad_rgb_set(hw_ev.index, get_pad_idle_color(hw_ev.index));
                         smcpad_rgb_show();
                     } else {
                         g_latched_pads_mask |= (uint16_t)(1u << hw_ev.index);
@@ -790,7 +822,7 @@ void loop(void) {
                 ev.value = 0;
                 ev.timestamp = app_get_millis();
                 smc_midi_process_event(&g_midi_engine, &g_encoder_engine, &ev);
-                smcpad_rgb_set(ev.index, smc_rgb_led_get_bank_palette(g_pad_bank)->idle_color);
+                smcpad_rgb_set(ev.index, get_pad_idle_color(ev.index));
                 smcpad_rgb_show();
 
                 uint16_t active_mask = g_held_pads_mask | g_latched_pads_mask;
@@ -804,7 +836,7 @@ void loop(void) {
                 ev.index = hw_ev.index;
                 ev.value = 0;
                 ev.timestamp = app_get_millis();
-                smcpad_rgb_set(ev.index, smc_rgb_led_get_bank_palette(g_pad_bank)->idle_color);
+                smcpad_rgb_set(ev.index, get_pad_idle_color(ev.index));
                 smcpad_rgb_show();
                 smc_midi_process_event(&g_midi_engine, &g_encoder_engine, &ev);
             }
@@ -931,7 +963,7 @@ void loop(void) {
                                     .timestamp = app_get_millis()
                                 };
                                 smc_midi_process_event(&g_midi_engine, &g_encoder_engine, &ev_off);
-                                smcpad_rgb_set(p, smc_rgb_led_get_bank_palette(g_pad_bank)->idle_color);
+                                smcpad_rgb_set(p, get_pad_idle_color(p));
                             }
                         }
                         smcpad_rgb_show();

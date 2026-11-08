@@ -31,7 +31,9 @@ typedef struct {
     uint8_t note;            /* MIDI Note Number (0..127) */
     uint8_t channel;         /* MIDI Channel (0..15) */
     uint8_t mode;            /* 0 = Momentary, 1 = Toggle */
-    uint8_t reserved;
+    uint8_t chord_count;     /* 0 or 1 = single note, 2..4 = chord */
+    int8_t  chord_offsets[3];/* Offsets relative to note */
+    uint8_t pressure_mode;   /* 0 = Channel Pressure (0xD0), 1 = Poly Key Pressure (0xA0) */
 } smc_pad_cfg_t;
 
 typedef struct {
@@ -44,6 +46,40 @@ typedef struct {
     uint8_t reserved[2];
 } smc_encoder_cfg_t;
 
+typedef enum {
+    SCALE_CHROMATIC = 0,
+    SCALE_MAJOR,
+    SCALE_NATURAL_MINOR,
+    SCALE_DORIAN,
+    SCALE_MIXOLYDIAN,
+    SCALE_PENTATONIC_MINOR,
+    SCALE_PENTATONIC_MAJOR,
+    SCALE_BLUES,
+    SCALE_COUNT
+} smc_scale_type_t;
+
+typedef struct {
+    bool             enabled;
+    uint8_t          root_note;  /* 0..11: 0=C, 1=C#, 2=D, ... */
+    smc_scale_type_t scale_type; /* SCALE_* */
+} smc_scale_config_t;
+
+/**
+ * @brief Get scale interval table and length for a given scale type.
+ */
+const uint8_t *smc_scale_get_intervals(smc_scale_type_t scale, uint8_t *len_out);
+
+/**
+ * @brief Calculate quantized MIDI note for a pad index given root, scale, and base note.
+ */
+uint8_t smc_scale_get_pad_note(const smc_scale_config_t *scale_cfg, uint8_t pad_idx, uint8_t base_note);
+
+/**
+ * @brief Check if a given MIDI note is in the active scale, and whether it is the root note.
+ * @return 2 if root note, 1 if in scale, 0 if out of scale.
+ */
+uint8_t smc_scale_check_note(const smc_scale_config_t *scale_cfg, uint8_t note);
+
 typedef struct {
     uint32_t magic;          /* SMC_CONFIG_MAGIC */
     uint16_t version;        /* SMC_CONFIG_VERSION */
@@ -52,6 +88,9 @@ typedef struct {
     /* Bank Mappings */
     smc_pad_cfg_t     pads[SMC_CONFIG_BANKS][SMC_CONFIG_PADS];
     smc_encoder_cfg_t encoders[SMC_CONFIG_BANKS][SMC_CONFIG_ENCODERS];
+
+    /* Scale Engine */
+    smc_scale_config_t scale;
 
     /* Pad Calibration & Velocity Engine */
     uint16_t strike_threshold;

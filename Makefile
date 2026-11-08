@@ -66,10 +66,10 @@ $(BUILD_DIR)/test_matrix: test/test_matrix.c $(BUILD_DIR)/host_ring_buffer.o $(B
 $(BUILD_DIR)/test_pad_adc: test/test_pad_adc.c $(BUILD_DIR)/host_ring_buffer.o $(BUILD_DIR)/host_velocity_curve.o $(BUILD_DIR)/host_pad_adc.o
 	$(CC) $(CFLAGS) $^ -o $@
 
-$(BUILD_DIR)/test_midi_dispatcher: test/test_midi_dispatcher.c $(BUILD_DIR)/host_ring_buffer.o $(BUILD_DIR)/host_encoder.o $(BUILD_DIR)/host_midi_dispatcher.o $(BUILD_DIR)/host_smc_config.o
+$(BUILD_DIR)/test_midi_dispatcher: test/test_midi_dispatcher.c $(BUILD_DIR)/host_ring_buffer.o $(BUILD_DIR)/host_encoder.o $(BUILD_DIR)/host_midi_dispatcher.o $(BUILD_DIR)/host_smc_config.o $(BUILD_DIR)/host_rgb_led.o
 	$(CC) $(CFLAGS) $^ -o $@
 
-$(BUILD_DIR)/test_rgb_led: test/test_rgb_led.c $(BUILD_DIR)/host_rgb_led.o
+$(BUILD_DIR)/test_rgb_led: test/test_rgb_led.c $(BUILD_DIR)/host_rgb_led.o $(BUILD_DIR)/host_smc_config.o
 	$(CC) $(CFLAGS) $^ -o $@
 
 $(BUILD_DIR)/test_config: test/test_config.c $(BUILD_DIR)/host_smc_config.o

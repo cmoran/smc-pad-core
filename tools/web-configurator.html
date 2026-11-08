@@ -140,6 +140,9 @@
     .pad:hover { border-color: var(--accent); }
     .pad.selected { border-color: #fff; box-shadow: 0 0 10px rgba(255,255,255,0.4); }
     .pad.hit { background: var(--pad-hit) !important; transform: scale(0.97); }
+    .pad.scale-root { border-color: #ffb300; background: #2e2007; box-shadow: inset 0 0 10px rgba(255, 179, 0, 0.25); }
+    .pad.scale-note { border-color: #00e5ff; background: #072533; box-shadow: inset 0 0 10px rgba(0, 229, 255, 0.2); }
+    .pad.scale-dim  { opacity: 0.5; border-color: #1a2233; }
     .pad-idx { font-size: 0.75rem; font-weight: 700; color: var(--text-muted); }
     .pad-note { font-size: 1.15rem; font-weight: 800; color: #fff; text-align: center; margin: auto 0; }
     .pad-info { font-size: 0.7rem; color: var(--text-muted); display: flex; justify-content: space-between; }
@@ -257,6 +260,49 @@
         <div class="knobs-grid" id="knobGrid"></div>
       </div>
 
+      <!-- Real-Time Pad Oscilloscope & Live Signal Visualizer -->
+      <div class="card">
+        <div class="card-title">
+          <span>Live Pad Oscilloscope & Dynamics</span>
+          <div style="font-size:0.75rem; color:var(--accent);" id="oscStatus">Signal: Ready</div>
+        </div>
+        <div style="position:relative; width:100%; height:150px; background:#07090f; border-radius:8px; border:1px solid var(--border); overflow:hidden;">
+          <canvas id="oscCanvas" width="600" height="150" style="width:100%; height:100%;"></canvas>
+        </div>
+        <div style="display:flex; justify-content:space-between; align-items:center; font-size:0.75rem; color:var(--text-muted);">
+          <span>Live ADC/Velocity Window: ~2-5 ms Peak Scan</span>
+          <span id="oscMetrics" style="font-family:monospace; color:var(--text-main);">Pad: -- | Note: -- | Vel: -- | Pressure: --</span>
+        </div>
+      </div>
+
+      <!-- 3-Strike Sensitivity Calibration Wizard -->
+      <div class="card">
+        <div class="card-title">
+          <span>3-Strike Calibration Wizard</span>
+          <button class="btn-sec" id="btnStartCal" onclick="toggleCalibrationWizard()">Start Wizard</button>
+        </div>
+        <p id="calIntro" style="font-size:0.8rem; color:var(--text-muted); line-height:1.4;">
+          Calibrate dynamic range and strike threshold automatically: strike any physical pad 3 times (Soft, Medium, Hard).
+        </p>
+        <div id="calContainer" style="display:none; flex-direction:column; gap:10px;">
+          <div style="display:flex; justify-content:space-between; align-items:center; background:var(--bg-subtle); padding:10px 14px; border-radius:6px; border-left:4px solid var(--warning);">
+            <div>
+              <div id="calStepTitle" style="font-size:0.85rem; font-weight:700; color:#fff;">Strike 1 of 3: Soft Hit</div>
+              <div id="calStepDesc" style="font-size:0.75rem; color:var(--text-muted);">Strike pad gently (pianissimo) to establish noise floor</div>
+            </div>
+            <div id="calStepBadge" style="font-size:1.1rem; font-weight:800; font-family:monospace; color:var(--accent);">Waiting...</div>
+          </div>
+          <div id="calResults" style="display:none; background:var(--bg-subtle); padding:10px 14px; border-radius:6px; font-size:0.8rem; flex-direction:column; gap:6px;">
+            <div style="color:var(--success); font-weight:700;">Calibration Computed:</div>
+            <div id="calResultDetails" style="color:var(--text-muted);">Optimal Threshold: 75 | Dynamic Range: 950</div>
+          </div>
+          <div style="display:flex; gap:10px;">
+            <button class="btn-sec" style="flex:1;" onclick="cancelCalibration()">Cancel</button>
+            <button id="btnApplyCal" style="flex:1; display:none; background:var(--success); color:#000;" onclick="applyCalibration()">Save Calibration</button>
+          </div>
+        </div>
+      </div>
+
     </div>
 
     <!-- Right Column: Inspector & Actions -->
@@ -285,6 +331,50 @@
         </div>
       </div>
 
+      <!-- Musical Scale & Key Quantizer -->
+      <div class="card">
+        <div class="card-title">
+          <span>Scale & Key Quantizer</span>
+          <button class="btn-sec" style="padding:4px 8px;" onclick="uploadScaleConfig()">Apply</button>
+        </div>
+        <div class="field-group">
+          <label style="display:flex; justify-content:space-between; align-items:center;">
+            <span>Scale Quantization Mode</span>
+            <input type="checkbox" id="chkScaleEnabled" onchange="onScaleToggle()" style="width:18px; height:18px; cursor:pointer;">
+          </label>
+        </div>
+        <div class="field-group">
+          <label>Root Musical Key</label>
+          <select id="selScaleRoot" onchange="onScaleParamChange()">
+            <option value="0">C</option>
+            <option value="1">C#</option>
+            <option value="2">D</option>
+            <option value="3">D#</option>
+            <option value="4">E</option>
+            <option value="5">F</option>
+            <option value="6">F#</option>
+            <option value="7">G</option>
+            <option value="8">G#</option>
+            <option value="9">A</option>
+            <option value="10">A#</option>
+            <option value="11">B</option>
+          </select>
+        </div>
+        <div class="field-group">
+          <label>Scale Type</label>
+          <select id="selScaleType" onchange="onScaleParamChange()">
+            <option value="0">Chromatic (Standard)</option>
+            <option value="1">Major (Ionian)</option>
+            <option value="2">Natural Minor (Aeolian)</option>
+            <option value="3">Dorian Mode</option>
+            <option value="4">Mixolydian Mode</option>
+            <option value="5">Minor Pentatonic</option>
+            <option value="6">Major Pentatonic</option>
+            <option value="7">Blues Scale</option>
+          </select>
+        </div>
+      </div>
+
       <!-- Pad Inspector -->
       <div class="card">
         <div class="card-title">
@@ -305,6 +395,31 @@
             <option value="0">Momentary (Note Strike)</option>
             <option value="1">Toggle (Latch On/Off)</option>
           </select>
+        </div>
+        <div class="field-group">
+          <label>Pressure / Aftertouch Mode</label>
+          <select id="inpPressureMode">
+            <option value="0">Channel Pressure (0xD0)</option>
+            <option value="1">Polyphonic Key Pressure (0xA0)</option>
+          </select>
+        </div>
+        <div class="field-group">
+          <label>Chord Voicing Engine</label>
+          <select id="inpChordVoicing" onchange="onChordVoicingChange()">
+            <option value="single">Single Note</option>
+            <option value="maj_triad">Major Triad (+4, +7)</option>
+            <option value="min_triad">Minor Triad (+3, +7)</option>
+            <option value="maj7">Major 7th (+4, +7, +11)</option>
+            <option value="min7">Minor 7th (+3, +7, +10)</option>
+            <option value="dom7">Dominant 7th (+4, +7, +10)</option>
+            <option value="sus4">Sus4 (+5, +7)</option>
+            <option value="power">Power Chord (+7, +12)</option>
+            <option value="custom">Custom Offsets...</option>
+          </select>
+        </div>
+        <div class="field-group" id="grpCustomOffsets" style="display:none;">
+          <label>Custom Semitone Offsets (up to 3, comma separated)</label>
+          <input type="text" id="inpCustomOffsets" placeholder="e.g. 3, 7, 10" value="">
         </div>
       </div>
 
@@ -369,11 +484,41 @@
     // Local configuration cache
     const config = {
       banks: Array(4).fill(0).map((_, b) => ({
-        pads: Array(16).fill(0).map((_, p) => ({ note: 36 + (b * 16) + p, channel: 0, mode: 0 })),
+        pads: Array(16).fill(0).map((_, p) => ({
+          note: 36 + (b * 16) + p,
+          channel: 0,
+          mode: 0,
+          chord_count: 1,
+          chord_offsets: [0, 0, 0],
+          pressure_mode: 0
+        })),
         encoders: Array(8).fill(0).map((_, e) => ({ cc: 16 + e, channel: 0, step: 1, min: 0, max: 127, value: 0 }))
       })),
       curve: 0,
-      threshold: 80
+      threshold: 80,
+      scale: { enabled: false, root: 0, type: 0 }
+    };
+
+    const SCALE_INTERVALS = {
+      0: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11], // Chromatic
+      1: [0, 2, 4, 5, 7, 9, 11],                 // Major
+      2: [0, 2, 3, 5, 7, 8, 10],                 // Natural Minor
+      3: [0, 2, 3, 5, 7, 9, 10],                 // Dorian
+      4: [0, 2, 4, 5, 7, 9, 10],                 // Mixolydian
+      5: [0, 3, 5, 7, 10],                       // Minor Pentatonic
+      6: [0, 2, 4, 7, 9],                        // Major Pentatonic
+      7: [0, 3, 5, 6, 7, 10]                     // Blues
+    };
+
+    const CHORD_PRESETS = {
+      "single":    { count: 1, offsets: [0, 0, 0] },
+      "maj_triad": { count: 3, offsets: [4, 7, 0] },
+      "min_triad": { count: 3, offsets: [3, 7, 0] },
+      "maj7":      { count: 4, offsets: [4, 7, 11] },
+      "min7":      { count: 4, offsets: [3, 7, 10] },
+      "dom7":      { count: 4, offsets: [4, 7, 10] },
+      "sus4":      { count: 3, offsets: [5, 7, 0] },
+      "power":     { count: 3, offsets: [7, 12, 0] }
     };
 
     function logMsg(type, text) {
@@ -460,22 +605,46 @@
             // Pad Map Response
             const b = data[4], p = data[5], note = data[6], ch = data[7], mode = data[8];
             if (b < 4 && p < 16) {
-              config.banks[b].pads[p] = { note, channel: ch, mode };
+              const chordCount = (data.length > 10) ? data[9] : 1;
+              const off0 = (data.length > 11) ? (data[10] - 64) : 0;
+              const off1 = (data.length > 12) ? (data[11] - 64) : 0;
+              const off2 = (data.length > 13) ? (data[12] - 64) : 0;
+              const pressMode = (data.length > 14) ? data[13] : 0;
+
+              config.banks[b].pads[p] = {
+                note,
+                channel: ch,
+                mode,
+                chord_count: chordCount,
+                chord_offsets: [off0, off1, off2],
+                pressure_mode: pressMode
+              };
               if (b === activeBank) renderPads();
             }
+          } else if (cmd === 0x26) {
+            // Scale Config Response
+            config.scale.enabled = (data[4] !== 0);
+            config.scale.root = data[5];
+            config.scale.type = data[6];
+            document.getElementById("chkScaleEnabled").checked = config.scale.enabled;
+            document.getElementById("selScaleRoot").value = config.scale.root;
+            document.getElementById("selScaleType").value = config.scale.type;
+            renderPads();
+            logMsg("rx", `Scale loaded: ${config.scale.enabled ? "ON" : "OFF"}, Root: ${NOTE_NAMES[config.scale.root]}, Type: ${config.scale.type}`);
           } else if (cmd === 0x7E) {
             logMsg("rx", `Command ACK: Status ${data[5] === 0 ? "OK" : "Error " + data[5]}`);
           }
         }
       } else {
-        // Real-time MIDI events (Note-On / Note-Off / CC)
+        // Real-time MIDI events (Note-On / Note-Off / CC / Pressure)
         const status = data[0] & 0xF0;
-        const note = data[1];
-        const vel = data[2];
+        const ch = data[0] & 0x0F;
+        const d1 = data[1];
+        const d2 = data[2];
 
-        if (status === 0x90 && vel > 0) {
-          // Strike pad feedback
-          const pIdx = config.banks[activeBank].pads.findIndex(p => p.note === note);
+        if (status === 0x90 && d2 > 0) {
+          // Note-On (Strike)
+          const pIdx = config.banks[activeBank].pads.findIndex(p => p.note === d1);
           if (pIdx !== -1) {
             const el = document.getElementById(`pad-${pIdx}`);
             if (el) {
@@ -483,10 +652,23 @@
               setTimeout(() => el.classList.remove("hit"), 150);
             }
           }
+          recordOscStrike(d1, d2, pIdx);
+          if (calWizard.active) {
+            recordCalStrike(d2);
+          }
+        } else if (status === 0x80 || (status === 0x90 && d2 === 0)) {
+          // Note-Off
+          recordOscNoteOff();
+        } else if (status === 0xD0) {
+          // Channel Pressure
+          recordOscPressure(d1);
+        } else if (status === 0xA0) {
+          // Polyphonic Key Pressure
+          recordOscPressure(d2);
         } else if (status === 0xB0) {
           // CC turn feedback
-          const cc = data[1];
-          const val = data[2];
+          const cc = d1;
+          const val = d2;
           const eIdx = config.banks[activeBank].encoders.findIndex(e => e.cc === cc);
           if (eIdx !== -1) {
             config.banks[activeBank].encoders[eIdx].value = val;
@@ -507,14 +689,39 @@
     function renderPads() {
       const grid = document.getElementById("padGrid");
       grid.innerHTML = "";
+      const scaleEnabled = config.scale && config.scale.enabled;
+      const root = config.scale ? config.scale.root : 0;
+      const scaleType = config.scale ? config.scale.type : 0;
+      const intervals = SCALE_INTERVALS[scaleType] || SCALE_INTERVALS[0];
+
       for (const p of PAD_VISUAL_ORDER) {
         const padData = config.banks[activeBank].pads[p];
         const padEl = document.createElement("div");
-        padEl.className = `pad ${p === selectedPad ? "selected" : ""}`;
+        let scaleClass = "";
+        if (scaleEnabled) {
+          const semitone = (padData.note + 12 - root) % 12;
+          if (semitone === 0) {
+            scaleClass = "scale-root";
+          } else if (intervals.includes(semitone)) {
+            scaleClass = "scale-note";
+          } else {
+            scaleClass = "scale-dim";
+          }
+        }
+
+        padEl.className = `pad ${p === selectedPad ? "selected" : ""} ${scaleClass}`;
         padEl.id = `pad-${p}`;
         padEl.onclick = () => selectPad(p);
+
+        const chordBadge = (padData.chord_count > 1)
+          ? `<span style="color:var(--warning); font-size:0.65rem; font-weight:700;">CHORD (${padData.chord_count})</span>`
+          : "";
+
         padEl.innerHTML = `
-          <div class="pad-idx">PAD ${p + 1}</div>
+          <div style="display:flex; justify-content:space-between; align-items:center;">
+            <div class="pad-idx">PAD ${p + 1}</div>
+            ${chordBadge}
+          </div>
           <div class="pad-note">${getNoteLabel(padData.note)}</div>
           <div class="pad-info">
             <span>#${padData.note}</span>
@@ -563,6 +770,67 @@
       document.getElementById("inpNote").value = padData.note;
       document.getElementById("inpChannel").value = padData.channel + 1;
       document.getElementById("inpMode").value = padData.mode;
+      document.getElementById("inpPressureMode").value = padData.pressure_mode || 0;
+
+      // Identify chord preset
+      let matchedPreset = "single";
+      if (padData.chord_count > 1) {
+        matchedPreset = "custom";
+        for (const [key, val] of Object.entries(CHORD_PRESETS)) {
+          if (val.count === padData.chord_count &&
+              val.offsets[0] === padData.chord_offsets[0] &&
+              val.offsets[1] === padData.chord_offsets[1] &&
+              val.offsets[2] === padData.chord_offsets[2]) {
+            matchedPreset = key;
+            break;
+          }
+        }
+      }
+      document.getElementById("inpChordVoicing").value = matchedPreset;
+      if (matchedPreset === "custom") {
+        document.getElementById("grpCustomOffsets").style.display = "flex";
+        document.getElementById("inpCustomOffsets").value = padData.chord_offsets.slice(0, padData.chord_count - 1).join(", ");
+      } else {
+        document.getElementById("grpCustomOffsets").style.display = "none";
+      }
+    }
+
+    function onChordVoicingChange() {
+      const sel = document.getElementById("inpChordVoicing").value;
+      const grp = document.getElementById("grpCustomOffsets");
+      if (sel === "custom") {
+        grp.style.display = "flex";
+      } else {
+        grp.style.display = "none";
+      }
+    }
+
+    function onScaleToggle() {
+      config.scale.enabled = document.getElementById("chkScaleEnabled").checked;
+      renderPads();
+    }
+
+    function onScaleParamChange() {
+      config.scale.root = parseInt(document.getElementById("selScaleRoot").value, 10);
+      config.scale.type = parseInt(document.getElementById("selScaleType").value, 10);
+      if (config.scale.enabled) {
+        renderPads();
+      }
+    }
+
+    function uploadScaleConfig() {
+      const enabled = document.getElementById("chkScaleEnabled").checked ? 1 : 0;
+      const root = parseInt(document.getElementById("selScaleRoot").value, 10);
+      const scaleType = parseInt(document.getElementById("selScaleType").value, 10);
+
+      config.scale.enabled = (enabled !== 0);
+      config.scale.root = root;
+      config.scale.type = scaleType;
+      renderPads();
+
+      // SMC_CMD_SET_SCALE_CFG = 0x25
+      sendSysEx([0xF0, 0x7D, 0x01, 0x25, enabled, root, scaleType, 0xF7]);
+      logMsg("tx", `Scale configured: ${enabled ? "ON" : "OFF"}, Root: ${NOTE_NAMES[root]}, Scale Type: ${scaleType}`);
     }
 
     function switchBank(b) {
@@ -587,12 +855,308 @@
       const note = parseInt(document.getElementById("inpNote").value, 10);
       const ch = parseInt(document.getElementById("inpChannel").value, 10) - 1;
       const mode = parseInt(document.getElementById("inpMode").value, 10);
+      const pressMode = parseInt(document.getElementById("inpPressureMode").value, 10);
 
-      config.banks[activeBank].pads[selectedPad] = { note, channel: ch, mode };
+      const chordSel = document.getElementById("inpChordVoicing").value;
+      let chordCount = 1;
+      let chordOffsets = [0, 0, 0];
+
+      if (chordSel === "custom") {
+        const raw = document.getElementById("inpCustomOffsets").value.split(",").map(s => parseInt(s.trim(), 10)).filter(n => !isNaN(n));
+        chordCount = Math.min(4, Math.max(1, raw.length + 1));
+        for (let i = 0; i < 3; i++) {
+          chordOffsets[i] = (i < raw.length) ? raw[i] : 0;
+        }
+      } else if (CHORD_PRESETS[chordSel]) {
+        chordCount = CHORD_PRESETS[chordSel].count;
+        chordOffsets = [...CHORD_PRESETS[chordSel].offsets];
+      }
+
+      config.banks[activeBank].pads[selectedPad] = {
+        note,
+        channel: ch,
+        mode,
+        chord_count: chordCount,
+        chord_offsets: chordOffsets,
+        pressure_mode: pressMode
+      };
       renderPads();
 
-      // Send SET_PAD_MAP: 0xF0 0x7D 0x01 0x11 <bank> <pad> <note> <ch> <mode> 0xF7
-      sendSysEx([0xF0, 0x7D, 0x01, 0x11, activeBank, selectedPad, note, ch, mode, 0xF7]);
+      // Send extended SET_PAD_MAP:
+      // 0xF0 0x7D 0x01 0x11 <bank> <pad> <note> <ch> <mode> <chord_count> <off0+64> <off1+64> <off2+64> <pressure_mode> 0xF7
+      sendSysEx([
+        0xF0, 0x7D, 0x01, 0x11,
+        activeBank, selectedPad, note, ch, mode,
+        chordCount,
+        (chordOffsets[0] + 64) & 0x7F,
+        (chordOffsets[1] + 64) & 0x7F,
+        (chordOffsets[2] + 64) & 0x7F,
+        pressMode & 0x01,
+        0xF7
+      ]);
+    }
+
+    // =========================================================================
+    // Real-Time Oscilloscope Engine
+    // =========================================================================
+    let oscCanvas = null;
+    let oscCtx = null;
+    const oscBuffer = new Array(120).fill(0);
+    let oscPeak = 0;
+    let oscActiveStrikeVel = 0;
+    let oscActivePressure = 0;
+    let oscActiveNote = null;
+    let oscActivePad = null;
+    let oscDecayTimer = 0;
+
+    function initOscilloscope() {
+      oscCanvas = document.getElementById("oscCanvas");
+      if (!oscCanvas) return;
+      oscCtx = oscCanvas.getContext("2d");
+      requestAnimationFrame(renderOscilloscope);
+    }
+
+    function recordOscStrike(note, vel, pIdx) {
+      oscActiveStrikeVel = vel;
+      oscActiveNote = note;
+      oscActivePad = (pIdx >= 0) ? (pIdx + 1) : "--";
+      oscPeak = Math.max(oscPeak, vel);
+      oscDecayTimer = 30;
+
+      const pulseHeight = (vel / 127) * 100;
+      for (let i = 0; i < 4; i++) {
+        oscBuffer.shift();
+        oscBuffer.push(pulseHeight * (1 - i * 0.2));
+      }
+      updateOscStatus();
+    }
+
+    function recordOscPressure(val) {
+      oscActivePressure = val;
+      oscPeak = Math.max(oscPeak, val);
+      const amp = (val / 127) * 100;
+      oscBuffer.shift();
+      oscBuffer.push(amp);
+      updateOscStatus();
+    }
+
+    function recordOscNoteOff() {
+      oscActivePressure = 0;
+      oscBuffer.shift();
+      oscBuffer.push(0);
+      updateOscStatus();
+    }
+
+    function updateOscStatus() {
+      const metrics = document.getElementById("oscMetrics");
+      if (metrics) {
+        const noteStr = (oscActiveNote !== null) ? `${getNoteLabel(oscActiveNote)} (#${oscActiveNote})` : "--";
+        metrics.innerText = `Pad: ${oscActivePad || "--"} | Note: ${noteStr} | Vel: ${oscActiveStrikeVel} | Pressure: ${oscActivePressure} | Peak: ${Math.round(oscPeak)}`;
+      }
+      const st = document.getElementById("oscStatus");
+      if (st) {
+        st.innerText = (oscActiveStrikeVel > 0 || oscActivePressure > 0) ? `Signal: Active (${oscActiveStrikeVel || oscActivePressure})` : "Signal: Ready";
+      }
+    }
+
+    function renderOscilloscope() {
+      if (!oscCtx || !oscCanvas) {
+        requestAnimationFrame(renderOscilloscope);
+        return;
+      }
+
+      const w = oscCanvas.width;
+      const h = oscCanvas.height;
+
+      // 1. CRT Background
+      oscCtx.fillStyle = "#07090f";
+      oscCtx.fillRect(0, 0, w, h);
+
+      // 2. CRT Grid Lines
+      oscCtx.strokeStyle = "rgba(46, 52, 77, 0.35)";
+      oscCtx.lineWidth = 1;
+      for (let x = 0; x < w; x += 30) {
+        oscCtx.beginPath();
+        oscCtx.moveTo(x, 0);
+        oscCtx.lineTo(x, h);
+        oscCtx.stroke();
+      }
+      for (let y = 0; y < h; y += 25) {
+        oscCtx.beginPath();
+        oscCtx.moveTo(0, y);
+        oscCtx.lineTo(w, y);
+        oscCtx.stroke();
+      }
+
+      // 3. Draw Strike Threshold Boundary Line
+      const threshVal = parseInt(document.getElementById("inpThreshold")?.value || 80, 10);
+      const threshY = h - (threshVal / 250) * (h - 20) - 10;
+      oscCtx.strokeStyle = "rgba(255, 179, 0, 0.6)";
+      oscCtx.setLineDash([4, 4]);
+      oscCtx.beginPath();
+      oscCtx.moveTo(0, threshY);
+      oscCtx.lineTo(w, threshY);
+      oscCtx.stroke();
+      oscCtx.setLineDash([]);
+      oscCtx.fillStyle = "rgba(255, 179, 0, 0.7)";
+      oscCtx.font = "10px sans-serif";
+      oscCtx.fillText(`Threshold: ${threshVal}`, 10, threshY - 4);
+
+      // 4. Rolling Waveform
+      const stepX = (w - 30) / oscBuffer.length;
+      oscCtx.beginPath();
+      for (let i = 0; i < oscBuffer.length; i++) {
+        const val = oscBuffer[i];
+        const y = h - 10 - (val / 100) * (h - 30);
+        if (i === 0) oscCtx.moveTo(0, y);
+        else oscCtx.lineTo(i * stepX, y);
+      }
+
+      oscCtx.strokeStyle = "#00e5ff";
+      oscCtx.lineWidth = 2;
+      oscCtx.shadowColor = "rgba(0, 229, 255, 0.6)";
+      oscCtx.shadowBlur = 8;
+      oscCtx.stroke();
+      oscCtx.shadowBlur = 0;
+
+      // Gradient under wave
+      oscCtx.lineTo(w - 30, h);
+      oscCtx.lineTo(0, h);
+      oscCtx.closePath();
+      const grad = oscCtx.createLinearGradient(0, 0, 0, h);
+      grad.addColorStop(0, "rgba(0, 229, 255, 0.2)");
+      grad.addColorStop(1, "rgba(0, 229, 255, 0.0)");
+      oscCtx.fillStyle = grad;
+      oscCtx.fill();
+
+      // 5. Right-Edge Peak Meter Bar
+      if (oscDecayTimer > 0) oscDecayTimer--;
+      else oscPeak *= 0.96;
+
+      const meterW = 12;
+      const meterX = w - meterW - 8;
+      const meterH = h - 20;
+      const meterFill = (oscPeak / 127) * meterH;
+
+      oscCtx.fillStyle = "rgba(255, 255, 255, 0.08)";
+      oscCtx.fillRect(meterX, 10, meterW, meterH);
+
+      const meterGrad = oscCtx.createLinearGradient(0, h - 10, 0, 10);
+      meterGrad.addColorStop(0, "#00e676");
+      meterGrad.addColorStop(0.7, "#ffb300");
+      meterGrad.addColorStop(1, "#ff5252");
+      oscCtx.fillStyle = meterGrad;
+      oscCtx.fillRect(meterX, h - 10 - meterFill, meterW, meterFill);
+
+      requestAnimationFrame(renderOscilloscope);
+    }
+
+    // =========================================================================
+    // 3-Strike Sensitivity Calibration Wizard Engine
+    // =========================================================================
+    const calWizard = {
+      active: false,
+      step: 0,
+      soft: 0,
+      med: 0,
+      hard: 0,
+      optThreshold: 80,
+      optRange: 950,
+      optCurve: 0
+    };
+
+    function toggleCalibrationWizard() {
+      if (calWizard.active) {
+        cancelCalibration();
+      } else {
+        startCalibration();
+      }
+    }
+
+    function startCalibration() {
+      calWizard.active = true;
+      calWizard.step = 1;
+      calWizard.soft = 0;
+      calWizard.med = 0;
+      calWizard.hard = 0;
+
+      document.getElementById("btnStartCal").innerText = "Abort Wizard";
+      document.getElementById("calIntro").style.display = "none";
+      document.getElementById("calContainer").style.display = "flex";
+      document.getElementById("calResults").style.display = "none";
+      document.getElementById("btnApplyCal").style.display = "none";
+
+      setCalStep(1, "Strike 1 of 3: Soft Hit", "Strike pad gently (pianissimo) to establish noise floor and strike threshold", "Waiting...");
+      logMsg("rx", "Calibration wizard started: waiting for Strike 1 (Soft)");
+    }
+
+    function setCalStep(step, title, desc, badge) {
+      calWizard.step = step;
+      document.getElementById("calStepTitle").innerText = title;
+      document.getElementById("calStepDesc").innerText = desc;
+      document.getElementById("calStepBadge").innerText = badge;
+    }
+
+    function recordCalStrike(vel) {
+      if (!calWizard.active) return;
+
+      if (calWizard.step === 1) {
+        calWizard.soft = vel;
+        setCalStep(2, "Strike 2 of 3: Medium Hit", "Strike pad with normal playing intensity (mezzo-forte)", `Vel: ${vel} (OK)`);
+        setTimeout(() => {
+          if (calWizard.step === 2) setCalStep(2, "Strike 2 of 3: Medium Hit", "Strike pad with normal playing intensity (mezzo-forte)", "Waiting...");
+        }, 800);
+        logMsg("rx", `Calibration Strike 1 captured: Vel ${vel}`);
+      } else if (calWizard.step === 2) {
+        calWizard.med = vel;
+        setCalStep(3, "Strike 3 of 3: Hard Hit", "Strike pad firmly with maximum intensity (fortissimo)", `Vel: ${vel} (OK)`);
+        setTimeout(() => {
+          if (calWizard.step === 3) setCalStep(3, "Strike 3 of 3: Hard Hit", "Strike pad firmly with maximum intensity (fortissimo)", "Waiting...");
+        }, 800);
+        logMsg("rx", `Calibration Strike 2 captured: Vel ${vel}`);
+      } else if (calWizard.step === 3) {
+        calWizard.hard = vel;
+        logMsg("rx", `Calibration Strike 3 captured: Vel ${vel}`);
+
+        // Compute optimal calibration
+        calWizard.optThreshold = Math.max(25, Math.min(150, Math.round(calWizard.soft * 0.75)));
+        const spread = Math.max(30, calWizard.hard - calWizard.soft);
+        calWizard.optRange = Math.min(1023, Math.max(300, spread * 10));
+        calWizard.optCurve = (spread < 50) ? 1 : 0; // Soft curve if narrow, Linear if wide
+
+        const curveNames = ["Linear", "Soft (Sensitive)", "Hard (Dynamic)", "Fixed"];
+        document.getElementById("calStepBadge").innerText = "Complete!";
+        document.getElementById("calStepTitle").innerText = "Calibration Finished";
+        document.getElementById("calStepDesc").innerText = `Captured Soft: ${calWizard.soft} | Med: ${calWizard.med} | Hard: ${calWizard.hard}`;
+
+        const details = document.getElementById("calResultDetails");
+        details.innerHTML = `
+          Optimal Strike Threshold: <strong>${calWizard.optThreshold}</strong> (Release: ${Math.round(calWizard.optThreshold / 2)})<br>
+          Dynamic Range: <strong>${calWizard.optRange}</strong> | Suggested Curve: <strong>${curveNames[calWizard.optCurve]}</strong>
+        `;
+        document.getElementById("calResults").style.display = "flex";
+        document.getElementById("btnApplyCal").style.display = "block";
+      }
+    }
+
+    function cancelCalibration() {
+      calWizard.active = false;
+      document.getElementById("btnStartCal").innerText = "Start Wizard";
+      document.getElementById("calIntro").style.display = "block";
+      document.getElementById("calContainer").style.display = "none";
+      logMsg("tx", "Calibration wizard aborted");
+    }
+
+    function applyCalibration() {
+      if (!calWizard.active) return;
+      document.getElementById("inpThreshold").value = calWizard.optThreshold;
+      document.getElementById("lblThreshold").innerText = calWizard.optThreshold;
+      document.getElementById("inpCurve").value = calWizard.optCurve;
+
+      uploadCalibration();
+      cancelCalibration();
+      logMsg("tx", "Applied calibrated sensitivity parameters to SMC-Pad");
+      alert("Calibrated sensitivity settings successfully pushed to SMC-Pad!");
     }
 
     function uploadCalibration() {
@@ -871,7 +1435,22 @@
       for (let b = 0; b < 4; b++) {
         for (let p = 0; p < 16; p++) {
           const pad = config.banks[b].pads[p];
-          sendSysEx([0xF0, 0x7D, 0x01, 0x11, b, p, pad.note, pad.channel, pad.mode, 0xF7]);
+          const chordCount = pad.chord_count || 1;
+          const off0 = (pad.chord_offsets && pad.chord_offsets[0]) || 0;
+          const off1 = (pad.chord_offsets && pad.chord_offsets[1]) || 0;
+          const off2 = (pad.chord_offsets && pad.chord_offsets[2]) || 0;
+          const pressMode = pad.pressure_mode || 0;
+
+          sendSysEx([
+            0xF0, 0x7D, 0x01, 0x11,
+            b, p, pad.note, pad.channel, pad.mode,
+            chordCount,
+            (off0 + 64) & 0x7F,
+            (off1 + 64) & 0x7F,
+            (off2 + 64) & 0x7F,
+            pressMode & 0x01,
+            0xF7
+          ]);
           await new Promise(r => setTimeout(r, 8)); // Pacing to prevent USB buffer overflow
         }
       }
@@ -885,11 +1464,23 @@
         }
       }
 
-      // 3. Send Calibration (Velocity Curve & Threshold)
+      // 3. Send Scale Engine Config
+      if (config.scale) {
+        sendSysEx([
+          0xF0, 0x7D, 0x01, 0x25,
+          config.scale.enabled ? 1 : 0,
+          config.scale.root || 0,
+          config.scale.type || 0,
+          0xF7
+        ]);
+        await new Promise(r => setTimeout(r, 10));
+      }
+
+      // 4. Send Calibration (Velocity Curve & Threshold)
       uploadCalibration();
       await new Promise(r => setTimeout(r, 20));
 
-      // 4. Save to Flash
+      // 5. Save to Flash
       saveToFlash();
       logMsg("rx", "Push complete! Saved to non-volatile flash memory.");
       alert("Profile successfully uploaded and stored permanently in SMC-Pad flash memory!");
@@ -897,6 +1488,7 @@
 
     // Initial render
     initProfiles();
+    initOscilloscope();
     renderPads();
     renderKnobs();
     selectPad(0);
