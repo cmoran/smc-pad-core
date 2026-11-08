@@ -143,13 +143,14 @@ static void test_shift_status_and_boot_animation(void)
     printf("Running test_shift_status_and_boot_animation...\n");
     smc_rgb_led_init();
 
-    /* Render shift status: Bank 1, Curve 2 (Hard), Octave -12, Semitone +1 */
-    smc_rgb_led_render_shift_status(1, 2, -12, 1);
+    /* Render shift status: Preset Pad 5 (Bank B Preset 2), Curve 2 (Hard), Octave -12, Semitone +1 */
+    smc_rgb_led_render_shift_status(5, 2, -12, 1);
 
     /* Row 1 & 2: Presets (Pads 0..7) */
-    assert(smc_rgb_led_get_pad(1) == SMC_COLOR_WHITE);      /* Active bank 1 is white */
-    assert(smc_rgb_led_get_pad(0) == SMC_COLOR_DIM_AMBER);  /* Inactive bank 0 is dim amber */
-    assert(smc_rgb_led_get_pad(2) == SMC_COLOR_DIM_AMBER);  /* Inactive bank 2 is dim amber */
+    assert(smc_rgb_led_get_pad(5) == SMC_COLOR_WHITE);      /* Active preset pad 5 is white */
+    assert(smc_rgb_led_get_pad(0) == SMC_COLOR_DIM_AMBER);  /* Inactive pad 0 is dim amber */
+    assert(smc_rgb_led_get_pad(1) == SMC_COLOR_DIM_AMBER);  /* Inactive pad 1 is dim amber */
+    assert(smc_rgb_led_get_pad(4) == SMC_COLOR_DIM_AMBER);  /* Inactive pad 4 is dim amber */
 
     /* Row 3: Velocity Curves (Pads 8..11) */
     assert(smc_rgb_led_get_pad(10) == SMC_COLOR_MAGENTA);     /* Active curve 2 (Pad 10) is bright magenta */
@@ -162,7 +163,8 @@ static void test_shift_status_and_boot_animation(void)
     assert(smc_rgb_led_get_pad(15) == SMC_COLOR_DIM_BLUE);  /* Octave +12 not active */
 
     /* Run boot animation in test mode (no delay) */
-    smc_rgb_led_boot_animation(NULL, NULL);
+    smc_rgb_led_boot_animation(smc_rgb_led_set_pad, smc_rgb_led_show, NULL);
+    assert(smc_rgb_led_get_pad(0) == SMC_COLOR_BLACK);
 
     printf("PASS: test_shift_status_and_boot_animation\n");
 }

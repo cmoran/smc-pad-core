@@ -59,8 +59,12 @@ The system SHALL interpret dedicated key combinations while the Shift button (Bu
 - **THEN** the pad matrix transitions back to the active bank resting color palette.
 
 #### Scenario: Shift + Pad bank jump
-- **WHEN** Shift is held and Pad 1-8 (indices 0..7) is pressed
-- **THEN** the active bank transitions directly to the selected bank and the Shift dashboard highlight moves to the newly selected bank pad.
+- **WHEN** Shift is held and Pad 1-4 (indices 0..3) is pressed
+- **THEN** the active preset updates to the selected index (0..3), the pad bank switches to Bank A (Bank 0), the PAD BANK LED turns off, and the Shift dashboard highlights the corresponding pad in Row 1.
+
+#### Scenario: Shift + Pad bank B preset selection
+- **WHEN** Shift is held and Pad 5-8 (indices 4..7) is pressed
+- **THEN** the active preset updates to the corresponding index (0..3), the pad bank switches to Bank B (Bank 1), the PAD BANK LED turns on, and the Shift dashboard highlights the corresponding pad in Row 2.
 
 #### Scenario: Shift + Pad velocity curve selection
 - **WHEN** Shift is held and Pad 9-12 (indices 8..11) is pressed

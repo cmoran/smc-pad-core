@@ -121,12 +121,12 @@ void smc_rgb_led_show(void);
 /**
  * @brief Render the Shift Status Dashboard across the 4x4 matrix.
  *
- * @param bank Active bank index (0..3).
+ * @param preset_pad Active preset pad index across Rows 1 & 2 (0..7).
  * @param velocity_curve Active velocity curve (0..3).
  * @param octave_offset Current octave offset (-48..+48).
  * @param semitone_offset Current semitone transpose offset (-12..+12).
  */
-void smc_rgb_led_render_shift_status(uint8_t bank,
+void smc_rgb_led_render_shift_status(uint8_t preset_pad,
                                      uint8_t velocity_curve,
                                      int8_t octave_offset,
                                      int8_t semitone_offset);
@@ -134,10 +134,13 @@ void smc_rgb_led_render_shift_status(uint8_t bank,
 /**
  * @brief Perform the startup boot animation (center-outward spiral flare).
  *
+ * @param set_fn Callback to set pad color (e.g. smcpad_rgb_set or smc_rgb_led_set_pad).
+ * @param show_fn Callback to show frame (e.g. smcpad_rgb_show or smc_rgb_led_show).
  * @param delay_fn Callback to delay milliseconds (e.g. smcpad_delay or NULL in tests).
- * @param show_fn Callback to show frame (e.g. smcpad_rgb_show or NULL).
  */
-void smc_rgb_led_boot_animation(void (*delay_fn)(uint32_t ms), void (*show_fn)(void));
+void smc_rgb_led_boot_animation(void (*set_fn)(uint8_t pad, uint32_t color),
+                                void (*show_fn)(void),
+                                void (*delay_fn)(uint32_t ms));
 
 #ifdef __cplusplus
 }

@@ -65,6 +65,7 @@ static smc_sysex_engine_t    g_sysex_engine;
 static smc_ble_midi_t        g_ble_engine;
 
 static volatile uint32_t     g_system_ticks = 0;
+static uint8_t               g_preset_idx = 0;
 static uint8_t               g_pad_bank = 0;
 static uint8_t               g_encoder_bank = 0;
 static int8_t                g_octave_offset = 0;
@@ -227,7 +228,8 @@ static void restore_bank_leds(void) {
 static void refresh_shift_status_view(void) {
     int8_t octave = smc_midi_get_octave_offset(&g_midi_engine);
     int8_t semi = smc_midi_get_semitone_offset(&g_midi_engine);
-    smc_rgb_led_render_shift_status(g_pad_bank, (uint8_t)g_config.velocity_curve, octave, semi);
+    uint8_t preset_pad = (g_pad_bank ? 4u : 0u) + (g_preset_idx & 0x03u);
+    smc_rgb_led_render_shift_status(preset_pad, (uint8_t)g_config.velocity_curve, octave, semi);
 #ifndef SMC_HOST_TEST
     for (int p = 0; p < SMC_NUM_PADS; p++) {
         smcpad_rgb_set(p, smc_rgb_led_get_pad(p));
@@ -261,6 +263,10 @@ static void refresh_repeat_cfg_leds(void) {
 #endif
 }
 
+static void app_set_pad_rgb(uint8_t pad, uint32_t color) {
+    smcpad_rgb_set(pad, color);
+}
+
 void setup(void) {
 #ifndef SMC_HOST_TEST
     /* Handshake with DFU bootloader to confirm successful boot */
@@ -288,10 +294,10 @@ void setup(void) {
 
     /* 5. Startup Boot Animation */
 #ifndef SMC_HOST_TEST
-    smc_rgb_led_boot_animation(smcpad_delay, smcpad_rgb_show);
+    smc_rgb_led_boot_animation(app_set_pad_rgb, smcpad_rgb_show, smcpad_delay);
 #else
     smc_rgb_led_init();
-    smc_rgb_led_boot_animation(NULL, NULL);
+    smc_rgb_led_boot_animation(smc_rgb_led_set_pad, smc_rgb_led_show, NULL);
 #endif
 
     /* 6. Set Initial Resting Pad Colors from Bank Palette */
@@ -417,10 +423,12 @@ void loop(void) {
             /* If Shift is active: execute stock Shift shortcuts instead of emitting Note-On */
             if (g_midi_engine.shift_active) {
                 if (hw_ev.index < 8) {
-                    /* Shift + Pads 1-8 (indices 0..7): Switch Bank/Preset */
-                    g_pad_bank = hw_ev.index % SMC_NUM_BANKS;
+                    /* Shift + Pads 1-4 (indices 0..3): Switch Preset (Bank A, PAD BANK LED off) */
+                    /* Shift + Pads 5-8 (indices 4..7): Switch Preset (Bank B, PAD BANK LED on) */
+                    g_preset_idx = hw_ev.index % 4;
+                    g_pad_bank = (hw_ev.index >= 4) ? 1 : 0;
                     smc_config_set_pad_bank(g_pad_bank);
-                    smcpad_led_set(1, (g_pad_bank > 0));
+                    smcpad_led_set(1, g_pad_bank);
                     refresh_shift_status_view();
                 } else if (hw_ev.index >= 8 && hw_ev.index <= 11) {
                     /* Shift + Pads 9-12 (indices 8..11): Velocity Curve (Linear, Soft, Hard, Fixed) */
@@ -664,14 +672,14 @@ void loop(void) {
                 smc_midi_panic(&g_midi_engine);
                 restore_bank_leds();
             } else if (hw_ev.index == 1) { /* Pad Bank (Btn 1) */
-                g_pad_bank = (g_pad_bank + 1) & 3;
+                g_pad_bank ^= 1;
                 smc_config_set_pad_bank(g_pad_bank);
                 restore_bank_leds();
-                smcpad_led_set(1, (g_pad_bank > 0));
+                smcpad_led_set(1, g_pad_bank);
             } else if (hw_ev.index == 2) { /* Knob Bank (Btn 2) */
-                g_encoder_bank = (g_encoder_bank + 1) & 3;
+                g_encoder_bank ^= 1;
                 smc_config_set_encoder_bank(g_encoder_bank);
-                smcpad_led_set(2, (g_encoder_bank > 0));
+                smcpad_led_set(2, g_encoder_bank);
             } else if (hw_ev.index == 3) { /* Left Arrow (Btn 3) */
                 smcpad_led_set(3, 1);
                 if (g_midi_engine.shift_active) {
@@ -705,8 +713,8 @@ void loop(void) {
                 smcpad_led_set(8, 0);
                 if (g_note_repeat_cfg_mode) {
                     g_note_repeat_cfg_mode = false;
-                    restore_bank_leds();
                 }
+                restore_bank_leds();
             } else if (hw_ev.index == 9) {
                 g_note_repeat_btn_held = false;
             } else if (hw_ev.index == 3) {
