@@ -70,13 +70,13 @@ The firmware runs a unidirectional, non-blocking, zero-allocation pipeline:
 ---
 
 ### Shift Layer Shortcuts (`Shift` + Control)
-Holding the **SHIFT** button (Button 8) engages the visual **Shift Status Dashboard** across the 4x4 matrix:
+Holding the **SHIFT** button (Button 8) engages the visual **Shift Status Dashboard** across the 4x4 matrix (matching the physical MPC layout with Pad 1 at bottom-left and Pad 16 at top-right):
 
 ```
-[ PAD 1 ] [ PAD 2 ] [ PAD 3 ] [ PAD 4 ]   --> Preset 1-4 (Bank A, PAD BANK LED off)
-[ PAD 5 ] [ PAD 6 ] [ PAD 7 ] [ PAD 8 ]   --> Preset 1-4 (Bank B, PAD BANK LED on)
-[ PAD 9 ] [ PAD 10] [ PAD 11] [ PAD 12]   --> Velocity Curve (Linear, Soft, Hard, Fixed 127)
-[ PAD 13] [ PAD 14] [ PAD 15] [ PAD 16]   --> Transpose (Semi -, Semi +, Octave -, Octave +)
+Top:    [ PAD 13 ] [ PAD 14 ] [ PAD 15 ] [ PAD 16 ]   --> Transpose (Semi -, Semi +, Octave -, Octave +)
+        [ PAD 9  ] [ PAD 10 ] [ PAD 11 ] [ PAD 12 ]   --> Velocity Curve (Linear, Soft, Hard, Fixed 127)
+        [ PAD 5  ] [ PAD 6  ] [ PAD 7  ] [ PAD 8  ]   --> Preset 1-4 (Bank B, PAD BANK LED on)
+Bottom: [ PAD 1  ] [ PAD 2  ] [ PAD 3  ] [ PAD 4  ]   --> Preset 1-4 (Bank A, PAD BANK LED off)
 ```
 
 - **Shift + Pads 1–4:** Select Presets 1–4 on Bank A.
@@ -104,6 +104,13 @@ Holding the **SHIFT** button (Button 8) engages the visual **Shift Status Dashbo
 - **Knob 4 (Latch):** Clockwise turns Latch ON; counter-clockwise turns Latch OFF.
 
 #### 2. Note Repeat Configuration Mode (`Shift` + `Note Repeat`)
+```
+Top:    [ PAD 13: Swing 5 (66%) ] [ PAD 14: Latch Toggle ] [ PAD 15: Sync ]   [ PAD 16: Tap Tempo ]
+        [ PAD 9:  Swing 1 (50%) ] [ PAD 10: Swing 2 (54%)] [ PAD 11: Swing 3] [ PAD 12: Swing 4 (62%) ]
+        [ PAD 5:  Rate 1/16     ] [ PAD 6:  Rate 1/16t   ] [ PAD 7:  Rate 1/32] [ PAD 8:  Rate 1/32t   ]
+Bottom: [ PAD 1:  Rate 1/4      ] [ PAD 2:  Rate 1/4t    ] [ PAD 3:  Rate 1/8 ] [ PAD 4:  Rate 1/8t    ]
+```
+
 - **Pads 1–8:** Direct Rate division buttons (`1/4` to `1/32t`).
 - **Pads 9–13:** Direct Swing buttons (`50%` to `66%`).
 - **Pad 14:** Latch toggle (illuminates bright green when active).
