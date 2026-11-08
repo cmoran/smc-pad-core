@@ -107,6 +107,25 @@ int main(void) {
     assert(!smc_midi_is_pad_active(&dispatcher, 7));
     assert(dispatcher.active_pads_mask == 0);
 
+    /* 5. Test Octave Transposition and Channel Override */
+    smc_midi_set_octave_offset(&dispatcher, 12); /* +1 Octave */
+    assert(smc_midi_get_octave_offset(&dispatcher) == 12);
+
+    sim_msg_count = 0;
+    smc_event_t ev_tr = { .type = EVENT_PAD_STRIKE, .index = 0, .value = 100, .timestamp = 600 };
+    smc_midi_process_event(&dispatcher, &encoder, &ev_tr);
+
+    assert(sim_msg_count == 1);
+    assert(sim_msgs[0].bytes[1] == 48); /* 36 + 12 = 48 */
+
+    /* Channel override to Channel 5 (index 4) */
+    smc_midi_set_channel_override(&dispatcher, 4);
+    assert(smc_midi_get_channel_override(&dispatcher) == 4);
+
+    sim_msg_count = 0;
+    smc_midi_process_event(&dispatcher, &encoder, &ev_tr);
+    assert(sim_msgs[0].bytes[0] == 0x94); /* Note-On Ch 5 (0x90 | 4) */
+
     printf("MIDI Dispatcher unit tests passed successfully!\n");
     return 0;
 }

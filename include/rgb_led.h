@@ -37,6 +37,26 @@ extern "C" {
 #define SMC_COLOR_DIM_BLUE      0x000020u
 #define SMC_COLOR_DIM_GREEN     0x002000u
 #define SMC_COLOR_DIM_ORANGE    0x201000u
+#define SMC_COLOR_DIM_AMBER     0x201000u
+#define SMC_COLOR_DIM_MAGENTA   0x200020u
+#define SMC_COLOR_DIM_CYAN      0x002020u
+
+typedef struct {
+    uint32_t idle_color;
+    uint32_t hit_color;
+} smc_bank_palette_t;
+
+extern const smc_bank_palette_t smc_bank_palettes[4];
+
+/**
+ * @brief Get color palette for a given virtual bank (0..3).
+ */
+const smc_bank_palette_t *smc_rgb_led_get_bank_palette(uint8_t bank);
+
+/**
+ * @brief Apply the idle color theme for the given bank across all 16 pads.
+ */
+void smc_rgb_led_set_bank_theme(uint8_t bank);
 
 /* Logical pad to physical WS2812 daisy-chain index mapping table */
 extern const uint8_t smc_pad_to_led_map[SMC_RGB_NUM_PADS];

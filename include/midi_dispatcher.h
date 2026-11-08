@@ -44,6 +44,10 @@ typedef struct {
     /* Shift state tracker */
     bool shift_active;
 
+    /* Octave & Channel Transpose Offsets */
+    int8_t  octave_offset;      /* Semitones offset (-48..+48), multiple of 12 */
+    int8_t  channel_override;   /* -1 = use per-pad channel, 0..15 = global override */
+
     /* Dual Output Transport Callbacks */
     void (*send_midi_msg)(const smc_midi_raw_msg_t *msg);     /* Primary / USB */
     void (*send_ble_msg)(const smc_midi_raw_msg_t *msg);      /* Wireless BLE-MIDI */
@@ -105,6 +109,26 @@ void smc_midi_process_event(smc_midi_dispatcher_t *dispatcher,
  * @brief Trigger an immediate MIDI Panic (All Sound Off CC 120, All Notes Off CC 123, Note-Off for active notes).
  */
 void smc_midi_panic(smc_midi_dispatcher_t *dispatcher);
+
+/**
+ * @brief Set global octave offset in semitones (-48..+48).
+ */
+void smc_midi_set_octave_offset(smc_midi_dispatcher_t *dispatcher, int8_t semitones);
+
+/**
+ * @brief Get current octave offset in semitones.
+ */
+int8_t smc_midi_get_octave_offset(const smc_midi_dispatcher_t *dispatcher);
+
+/**
+ * @brief Set global MIDI channel override (-1 for per-pad config, 0..15 to override).
+ */
+void smc_midi_set_channel_override(smc_midi_dispatcher_t *dispatcher, int8_t channel);
+
+/**
+ * @brief Get current global MIDI channel override.
+ */
+int8_t smc_midi_get_channel_override(const smc_midi_dispatcher_t *dispatcher);
 
 /**
  * @brief Check if a pad is currently sounding (active Note-On without Note-Off).

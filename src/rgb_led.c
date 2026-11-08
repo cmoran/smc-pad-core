@@ -36,6 +36,30 @@ const uint8_t smc_pad_to_led_map[SMC_RGB_NUM_PADS] = {
     13, 12,  8,  3
 };
 
+/* Virtual Bank Color Palettes:
+ * Bank 0: Dim Blue idle, Bright Green hit (GM Drums)
+ * Bank 1: Dim Amber idle, Bright Yellow hit
+ * Bank 2: Dim Magenta idle, Bright Cyan hit
+ * Bank 3: Dim Cyan idle, Bright White hit
+ */
+const smc_bank_palette_t smc_bank_palettes[4] = {
+    { SMC_COLOR_DIM_BLUE,    SMC_COLOR_GREEN },
+    { SMC_COLOR_DIM_AMBER,   SMC_COLOR_YELLOW },
+    { SMC_COLOR_DIM_MAGENTA, SMC_COLOR_CYAN },
+    { SMC_COLOR_DIM_CYAN,    SMC_COLOR_WHITE }
+};
+
+const smc_bank_palette_t *smc_rgb_led_get_bank_palette(uint8_t bank)
+{
+    return &smc_bank_palettes[bank & 0x03u];
+}
+
+void smc_rgb_led_set_bank_theme(uint8_t bank)
+{
+    const smc_bank_palette_t *pal = smc_rgb_led_get_bank_palette(bank);
+    smc_rgb_led_set_all(pal->idle_color);
+}
+
 /* State variables (zero dynamic allocation) */
 static uint32_t s_chain_rgb[SMC_RGB_NUM_PADS];
 static uint8_t s_dma_buf[SMC_RGB_DMA_BUFFER_SIZE] __attribute__((aligned(4)));

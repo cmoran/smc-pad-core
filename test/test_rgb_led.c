@@ -112,11 +112,38 @@ static void test_buffer_bounds(void)
     printf("PASS: test_buffer_bounds\n");
 }
 
+static void test_bank_palettes(void)
+{
+    printf("Running test_bank_palettes...\n");
+    smc_rgb_led_init();
+
+    /* Bank 0 theme */
+    smc_rgb_led_set_bank_theme(0);
+    assert(smc_rgb_led_get_pad(0) == SMC_COLOR_DIM_BLUE);
+    assert(smc_rgb_led_get_bank_palette(0)->hit_color == SMC_COLOR_GREEN);
+
+    /* Bank 1 theme */
+    smc_rgb_led_set_bank_theme(1);
+    assert(smc_rgb_led_get_pad(0) == SMC_COLOR_DIM_AMBER);
+    assert(smc_rgb_led_get_bank_palette(1)->hit_color == SMC_COLOR_YELLOW);
+
+    /* Bank 2 theme */
+    smc_rgb_led_set_bank_theme(2);
+    assert(smc_rgb_led_get_pad(0) == SMC_COLOR_DIM_MAGENTA);
+
+    /* Bank 3 theme */
+    smc_rgb_led_set_bank_theme(3);
+    assert(smc_rgb_led_get_pad(0) == SMC_COLOR_DIM_CYAN);
+
+    printf("PASS: test_bank_palettes\n");
+}
+
 int main(void)
 {
     printf("\n=== Running SMC-Pad RGB LED Tests ===\n");
     test_initialization_and_defaults();
     test_pad_mapping_and_colors();
+    test_bank_palettes();
     test_ws2812_grb_serialization();
     test_buffer_bounds();
     printf("=== All SMC-Pad RGB LED Tests Passed Successfully! ===\n\n");
