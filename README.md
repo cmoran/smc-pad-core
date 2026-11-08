@@ -6,6 +6,8 @@
 
 A high-performance, low-latency, clean-slate open-source firmware for the **M-VAVE SMC-Pad** MIDI controller, powered by the JieLi AC6966C (BR25 family) SoC.
 
+> 📖 **Looking for full tutorials, chord voicings, DAW setup, and calibration? Check out the [Complete User & Performance Guide](docs/USER_GUIDE.md)!**
+
 ---
 
 ## 🌟 Acknowledgments & Credits
@@ -123,22 +125,43 @@ Bottom: [ PAD 1:  Rate 1/4      ] [ PAD 2:  Rate 1/4t    ] [ PAD 3:  Rate 1/8 ] 
 
 ---
 
+## 🎹 Advanced Performance Features
+
+### 1. Pad Chord Engine & Strum Tracking
+* **Multi-Note Voicings:** Pads can be configured to sound 1 to 4 simultaneous notes (Major Triad, Minor Triad, Major 7th, Minor 7th, Dominant 7th, Sus4, Power Chords, or custom semitone offsets).
+* **Zero Stuck Notes Guarantee:** Complete polyphonic tracking memory guarantees matching Note-Offs for every sounded note on pad release or panic, regardless of subsequent bank, octave, or scale changes.
+
+### 2. Musical Scale & Key Quantization (Smart RGB Lighting)
+* **Musical Scale Modes:** Monotonically maps the 16 pads across degrees of 8 selectable scale types (Major, Natural Minor, Dorian, Mixolydian, Minor Pentatonic, Major Pentatonic, Blues, and Chromatic) in any root key (C through B).
+* **Smart Visual RGB Lighting:**
+  - 🟡 **Gold / Amber (`0xFFB300`):** Root notes (tonic center).
+  - 🔵 **Bright Cyan (`0x00E5FF`):** In-scale notes.
+  - ⚫ **Dim (`0x000510`):** Out-of-scale chromatic notes.
+
+### 3. Adaptive Rotary Encoder Acceleration
+* **Velocity Ballistics Algorithm:** Inter-tick timing detection adjusts step scaling dynamically:
+  - **Slow ($\ge 60\text{ ms}$):** $\times 1$ precision adjustment for micro-tuning.
+  - **Medium ($25\text{ ms} \le \Delta t < 60\text{ ms}$):** $\times 2$ standard turn.
+  - **Fast Flick ($< 25\text{ ms}$):** $\times 4$ ballistic sweep from 0 to 127 in a single movement.
+
+### 4. Polyphonic Key Pressure (`0xA0`) vs Channel Pressure (`0xD0`)
+* **Selectable Pressure Mode:** Choose between standard Channel Pressure (`0xD0`) for vintage synths and **Polyphonic Key Pressure (`0xA0`)** for modern MPE-style polyphonic synthesizers (Serum, Pigments, Diva, Ableton Wavetable, Bitwig).
+
+---
+
 ## 🌐 WebMIDI Configurator & Musical Profiles
 
 No installation or proprietary driver required. Open [`tools/web-configurator.html`](tools/web-configurator.html) in any Chromium-based browser (Chrome, Chromium, Brave, Edge):
 
-1. Open [`tools/web-configurator.html`](tools/web-configurator.html) in your browser.
-2. Click **Connect SMC-Pad** and allow MIDI / SysEx access.
-3. **Musical Profiles & Setups**:
-   - Save and name custom configurations (e.g. *"Future Funk Setup"*, *"Cumbia Setup"*, *"Studio DAW Mixing"*, *"MPC Finger Drumming"*).
+1. **Live CRT Oscilloscope:** Real-time 60 FPS canvas visualization of strike velocity, continuous aftertouch pressure, peak meters, and threshold boundary lines.
+2. **Automated 3-Strike Sensitivity Calibration Wizard:** Prompts user for 3 physical pad strikes (Soft $\to$ Medium $\to$ Hard) to automatically calculate optimal Strike Threshold, Release Threshold, Dynamic Range, and Velocity Curve.
+3. **Scale & Key Quantizer:** Select musical key and scale type with real-time visual pad matrix previews.
+4. **Pad & Chord Inspector:** Configure note numbers, MIDI channels, momentary/toggle modes, chord voicings, and polyphonic aftertouch.
+5. **Musical Profiles & Setups:**
+   - Save and name custom configurations (e.g. *"Future Funk Setup"*, *"Cumbia & Latin Percussion"*, *"Studio DAW Mixing"*, *"MPC Finger Drumming"*).
    - Instant 1-click **Push to SMC-Pad** to write all 4 banks and settings to device flash.
    - **JSON Export / Import**: Backup, share, or download setups as `.json` files.
-4. Visually customize:
-   - Note mappings, trigger modes, and channels for all 4 banks.
-   - Rotary encoder CC assignments, relative/absolute modes, and limits.
-   - Velocity curves (Linear, Soft, Hard, Fixed) and pad sensitivity thresholds.
-   - Real-time strike & turn visualizers.
-5. Click **Save to Flash** to store settings permanently in non-volatile flash memory.
+6. Click **Save to Flash** to store settings permanently in non-volatile flash memory.
 
 ---
 
