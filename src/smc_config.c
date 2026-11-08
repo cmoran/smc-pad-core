@@ -8,10 +8,10 @@
 
 #ifndef SMC_HOST_TEST
 #include "smc_hw.h"
-/* Forward declaration of JieLi SDK syscfg if present in target */
+/* Forward declaration of SMC-Pad runtime persistent storage */
 #define CFG_SMC_USER_APP_ID   48
-extern int syscfg_read(uint16_t item_id, void *buf, uint16_t len);
-extern int syscfg_write(uint16_t item_id, const void *buf, uint16_t len);
+extern int smcpad_store_read(int key, void *buf, int len);
+extern int smcpad_store_write(int key, const void *buf, int len);
 #endif
 
 /* Active virtual banks */
@@ -145,7 +145,7 @@ bool smc_config_load(smc_config_t *cfg) {
     }
 #ifndef SMC_HOST_TEST
     else {
-        int ret = syscfg_read(CFG_SMC_USER_APP_ID, cfg, sizeof(smc_config_t));
+        int ret = smcpad_store_read(CFG_SMC_USER_APP_ID, cfg, sizeof(smc_config_t));
         read_ok = (ret == (int)sizeof(smc_config_t));
     }
 #else
@@ -176,7 +176,7 @@ bool smc_config_save(smc_config_t *cfg) {
     }
 #ifndef SMC_HOST_TEST
     else {
-        int ret = syscfg_write(CFG_SMC_USER_APP_ID, cfg, sizeof(smc_config_t));
+        int ret = smcpad_store_write(CFG_SMC_USER_APP_ID, cfg, sizeof(smc_config_t));
         return (ret == (int)sizeof(smc_config_t));
     }
 #else

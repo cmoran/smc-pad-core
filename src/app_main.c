@@ -269,10 +269,14 @@ void smc_timer_1khz_isr(void) {
 }
 
 /* ========================================================================= */
-/* Main Application Entry Point                                              */
+/* Application Entry Points (setup / loop)                                   */
 /* ========================================================================= */
 
-int main(void) {
+#ifndef SMC_HOST_TEST
+extern int smcpad_usbmidi_read(uint8_t packet[4]);
+#endif
+
+void setup(void) {
     /* 1. Clear bootloader crash counter */
     REG32(SMC_BOOT_COUNT_ADDR) = 0;
 
@@ -329,65 +333,95 @@ int main(void) {
     smc_rgb_led_init();
     smc_rgb_led_set_all(g_config.pad_idle_color);
     smc_rgb_led_show();
+}
 
-    /* 11. Main Event Processing Loop (Lock-Free Consumer) */
-    smc_event_t ev;
-    while (1) {
-        if (smc_queue_pop(&g_event_queue, &ev)) {
-            switch (ev.type) {
-            case EVENT_PAD_STRIKE:
-                /* Illuminate pad in active hit color */
-                smc_rgb_led_set_pad(ev.index, g_config.pad_hit_color);
-                smc_rgb_led_show();
-                smc_midi_process_event(&g_midi_engine, &g_encoder_engine, &ev);
-                break;
-
-            case EVENT_PAD_RELEASE:
-                /* Restore resting idle color */
-                smc_rgb_led_set_pad(ev.index, g_config.pad_idle_color);
-                smc_rgb_led_show();
-                smc_midi_process_event(&g_midi_engine, &g_encoder_engine, &ev);
-                break;
-
-            case EVENT_ENCODER_DELTA:
-                smc_midi_process_event(&g_midi_engine, &g_encoder_engine, &ev);
-                break;
-
-            case EVENT_BUTTON_DOWN:
-                if (ev.index == BTN_SHIFT) {
-                    g_midi_engine.shift_active = true;
-                    smc_matrix_set_led(&g_matrix_engine, LED_SHIFT, true);
-                } else if (ev.index == BTN_PAUSE && g_midi_engine.shift_active) {
-                    /* Shift + Pause = Panic (All Notes Off) */
-                    smc_midi_panic(&g_midi_engine);
-                    smc_rgb_led_set_all(g_config.pad_idle_color);
-                    smc_rgb_led_show();
-                } else if (ev.index == BTN_PAD_BANK) {
-                    /* Cycle pad bank 0..3 */
-                    g_pad_bank = (g_pad_bank + 1) & 3;
-                    smc_config_set_pad_bank(g_pad_bank);
-                    smc_matrix_set_led(&g_matrix_engine, LED_PAD_BANK, (g_pad_bank > 0));
-                } else if (ev.index == BTN_KNOB_BANK) {
-                    /* Cycle encoder bank 0..3 */
-                    g_encoder_bank = (g_encoder_bank + 1) & 3;
-                    smc_config_set_encoder_bank(g_encoder_bank);
-                    smc_encoder_set_bank(&g_encoder_engine, g_encoder_bank);
-                    smc_matrix_set_led(&g_matrix_engine, LED_KNOB_BANK, (g_encoder_bank > 0));
-                }
-                break;
-
-            case EVENT_BUTTON_UP:
-                if (ev.index == BTN_SHIFT) {
-                    g_midi_engine.shift_active = false;
-                    smc_matrix_set_led(&g_matrix_engine, LED_SHIFT, false);
-                }
-                break;
-
-            default:
-                break;
-            }
+void loop(void) {
+    /* 1. Drain incoming USB-MIDI packets from host DAW or WebMIDI */
+#ifndef SMC_HOST_TEST
+    uint8_t rx_pkt[4];
+    while (smcpad_usbmidi_read(rx_pkt)) {
+        uint8_t cin = rx_pkt[0] & 0x0Fu;
+        if (cin == 0x08 || cin == 0x09 || cin == 0x0B) {
+            smc_midi_rx_feed_byte(&g_midi_engine, rx_pkt[1]);
+            smc_midi_rx_feed_byte(&g_midi_engine, rx_pkt[2]);
+            smc_midi_rx_feed_byte(&g_midi_engine, rx_pkt[3]);
+        } else if (cin == 0x04 || cin == 0x07) {
+            smc_midi_rx_feed_byte(&g_midi_engine, rx_pkt[1]);
+            smc_midi_rx_feed_byte(&g_midi_engine, rx_pkt[2]);
+            smc_midi_rx_feed_byte(&g_midi_engine, rx_pkt[3]);
+        } else if (cin == 0x06) {
+            smc_midi_rx_feed_byte(&g_midi_engine, rx_pkt[1]);
+            smc_midi_rx_feed_byte(&g_midi_engine, rx_pkt[2]);
+        } else if (cin == 0x05) {
+            smc_midi_rx_feed_byte(&g_midi_engine, rx_pkt[1]);
         }
     }
+#endif
 
+    /* 2. Process ring buffer events from hardware scan ISR */
+    smc_event_t ev;
+    if (smc_queue_pop(&g_event_queue, &ev)) {
+        switch (ev.type) {
+        case EVENT_PAD_STRIKE:
+            /* Illuminate pad in active hit color */
+            smc_rgb_led_set_pad(ev.index, g_config.pad_hit_color);
+            smc_rgb_led_show();
+            smc_midi_process_event(&g_midi_engine, &g_encoder_engine, &ev);
+            break;
+
+        case EVENT_PAD_RELEASE:
+            /* Restore resting idle color */
+            smc_rgb_led_set_pad(ev.index, g_config.pad_idle_color);
+            smc_rgb_led_show();
+            smc_midi_process_event(&g_midi_engine, &g_encoder_engine, &ev);
+            break;
+
+        case EVENT_ENCODER_DELTA:
+            smc_midi_process_event(&g_midi_engine, &g_encoder_engine, &ev);
+            break;
+
+        case EVENT_BUTTON_DOWN:
+            if (ev.index == BTN_SHIFT) {
+                g_midi_engine.shift_active = true;
+                smc_matrix_set_led(&g_matrix_engine, LED_SHIFT, true);
+            } else if (ev.index == BTN_PAUSE && g_midi_engine.shift_active) {
+                /* Shift + Pause = Panic (All Notes Off) */
+                smc_midi_panic(&g_midi_engine);
+                smc_rgb_led_set_all(g_config.pad_idle_color);
+                smc_rgb_led_show();
+            } else if (ev.index == BTN_PAD_BANK) {
+                /* Cycle pad bank 0..3 */
+                g_pad_bank = (g_pad_bank + 1) & 3;
+                smc_config_set_pad_bank(g_pad_bank);
+                smc_matrix_set_led(&g_matrix_engine, LED_PAD_BANK, (g_pad_bank > 0));
+            } else if (ev.index == BTN_KNOB_BANK) {
+                /* Cycle encoder bank 0..3 */
+                g_encoder_bank = (g_encoder_bank + 1) & 3;
+                smc_config_set_encoder_bank(g_encoder_bank);
+                smc_encoder_set_bank(&g_encoder_engine, g_encoder_bank);
+                smc_matrix_set_led(&g_matrix_engine, LED_KNOB_BANK, (g_encoder_bank > 0));
+            }
+            break;
+
+        case EVENT_BUTTON_UP:
+            if (ev.index == BTN_SHIFT) {
+                g_midi_engine.shift_active = false;
+                smc_matrix_set_led(&g_matrix_engine, LED_SHIFT, false);
+            }
+            break;
+
+        default:
+            break;
+        }
+    }
+}
+
+#ifdef SMC_HOST_TEST
+int main(void) {
+    setup();
+    while (1) {
+        loop();
+    }
     return 0;
 }
+#endif

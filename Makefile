@@ -29,8 +29,16 @@ JL_TC ?= $(firstword $(wildcard tools/jl-toolchain/jieli-linux-toolchains-*))
 JL_PB ?= $(firstword $(wildcard tools/jl-postbuild/jieli-linux-post-build-tools-*))
 
 JL_CC := $(JL_TC)/common/bin/clang
+JL_LD := $(JL_TC)/pi32v2/bin/ld
+JL_LIB := $(JL_TC)/pi32v2/lib/r3
 JL_CFLAGS := -target pi32v2 -mcpu=r3 -integrated-as -Oz -fno-common -ffunction-sections -fdata-sections \
              -mllvm -enable-ipra=false -isystem $(JL_TC)/pi32v2/include -std=c99 -Wall -Wextra -Iinclude
+
+SMCPAD_PACK := reference/open-smc-pad/arduino/smcpad/tools/host/smcpad_pack
+SMCPAD_CORE := reference/open-smc-pad/arduino/smcpad/system/smcpad_core.o
+SMCPAD_NATIVE := reference/open-smc-pad/arduino/smcpad/system/libsmcpad_native.a
+SMCPAD_LDSCRIPT := reference/open-smc-pad/arduino/smcpad/system/sdk.ld
+SMCPAD_TEMPLATE := reference/open-smc-pad/arduino/smcpad/system/app_template.bin
 
 TARGET_SRCS := $(HOST_SRCS) src/app_main.c
 TARGET_OBJS := $(patsubst src/%.c,$(BUILD_DIR)/target_%.o,$(TARGET_SRCS))
@@ -97,10 +105,20 @@ $(BUILD_DIR)/target_%.o: src/%.c | $(BUILD_DIR)
 	fi
 	$(JL_CC) $(JL_CFLAGS) -c $< -o $@
 
-firmware: $(TARGET_OBJS)
-	@echo "=== Compiled all target modules for JieLi pi32v2 ==="
-	@ls -lh $(TARGET_OBJS)
-	@echo "All target objects generated successfully in $(BUILD_DIR)/."
+$(BUILD_DIR)/smcpad.elf: $(TARGET_OBJS)
+	@echo "=== Linking Target Firmware ELF ==="
+	$(JL_LD) -o $@ $(TARGET_OBJS) $(SMCPAD_CORE) \
+		--start-group $(SMCPAD_NATIVE) $(JL_LIB)/libc.a $(JL_LIB)/libm.a $(JL_LIB)/libcompiler-rt.a --end-group \
+		-T$(SMCPAD_LDSCRIPT) --gc-sections --sort-common --dont-complain-call-overflow
+
+$(BUILD_DIR)/app.bin: $(BUILD_DIR)/smcpad.elf
+	@echo "=== Packaging Flashable DFU Binary ==="
+	$(SMCPAD_PACK) $< $@ --template $(SMCPAD_TEMPLATE) --size
+
+firmware: $(BUILD_DIR)/app.bin
+	@echo "=== Firmware Build Complete ==="
+	@ls -lh $(BUILD_DIR)/app.bin
+	@echo "Ready for flashing via: dfu-util -d 1209:0002 -a 0 -D $(BUILD_DIR)/app.bin"
 
 docker-firmware:
 	@echo "Running Docker build helper..."
