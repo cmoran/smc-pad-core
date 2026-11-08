@@ -39,6 +39,35 @@ extern int  smcpad_usbmidi_write(const uint8_t packet[4]);
 extern int  smcpad_usbmidi_read(uint8_t packet[4]);
 extern uint32_t smcpad_millis(void);
 extern void smcpad_delay(uint32_t ms);
+extern void smcpad_yield(void);
+
+/* JieLi BLE Peripheral runtime declarations from smcpad_core.o */
+enum {
+    SMCPAD_BLE_CONNECTED = 1,
+    SMCPAD_BLE_DISCONNECTED,
+    SMCPAD_BLE_SUBSCRIBE,
+};
+
+typedef struct {
+    uint16_t (*read)(uint16_t handle, uint16_t offset, uint8_t *buf, uint16_t size);
+    void (*write)(uint16_t handle, uint16_t offset, const uint8_t *data, uint16_t len);
+    void (*event)(int event, uint16_t handle, uint16_t value);
+} smcpad_ble_callbacks_t;
+
+extern void     smcpad_ble_begin(const smcpad_ble_callbacks_t *cb);
+extern int      smcpad_ble_ready(void);
+extern void     smcpad_ble_set_name(const char *name);
+extern void     smcpad_ble_set_profile(const uint8_t *db, uint16_t len);
+extern void     smcpad_ble_set_adv(const uint8_t *adv, uint8_t adv_len, const uint8_t *rsp, uint8_t rsp_len,
+                                   uint16_t interval, int connectable);
+extern void     smcpad_ble_advertise(int on);
+extern uint16_t smcpad_ble_connection(void);
+extern uint16_t smcpad_ble_mtu(void);
+extern int      smcpad_ble_notify(uint16_t handle, const uint8_t *data, uint16_t len);
+extern uint16_t smcpad_ble_queued(void);
+extern void     smcpad_ble_set_conn_interval(uint16_t min, uint16_t max);
+extern int      smcpad_ble_subscribed(uint16_t handle);
+extern void     smcpad_ble_disconnect(void);
 
 typedef struct {
     uint8_t type;
@@ -143,6 +172,132 @@ static void hal_send_midi_packet(const smc_midi_raw_msg_t *msg) {
         (msg->len > 2) ? msg->bytes[2] : 0
     };
     smcpad_usbmidi_write(packet);
+#endif
+}
+
+#define SMC_BLE_MIDI_HANDLE_VAL   12
+#define SMC_BLE_GAP_NAME_HANDLE   3
+#define SMC_BLE_RX_BUF_SIZE       128u
+
+typedef struct {
+    uint8_t buffer[SMC_BLE_RX_BUF_SIZE];
+    volatile uint32_t head;
+    volatile uint32_t tail;
+} smc_ble_rx_fifo_t;
+
+static smc_ble_rx_fifo_t     g_ble_rx_fifo;
+static bool                  g_ble_enabled = true;
+static bool                  g_ble_initialized = false;
+
+/* Standard BTstack ATT database: GAP, GATT, and Apple/MMA BLE-MIDI GATT Service */
+static const uint8_t s_ble_midi_profile_db[180] = {
+    0x0a, 0x00, 0x02, 0x00, 0x01, 0x00, 0x00, 0x28, 0x00, 0x18, 0x0d, 0x00,
+    0x02, 0x00, 0x02, 0x00, 0x03, 0x28, 0x02, 0x03, 0x00, 0x00, 0x2a, 0x08,
+    0x00, 0x02, 0x01, 0x03, 0x00, 0x00, 0x2a, 0x0d, 0x00, 0x02, 0x00, 0x04,
+    0x00, 0x03, 0x28, 0x02, 0x05, 0x00, 0x01, 0x2a, 0x0a, 0x00, 0x02, 0x00,
+    0x05, 0x00, 0x01, 0x2a, 0x00, 0x00, 0x0a, 0x00, 0x02, 0x00, 0x06, 0x00,
+    0x00, 0x28, 0x01, 0x18, 0x0d, 0x00, 0x02, 0x00, 0x07, 0x00, 0x03, 0x28,
+    0x20, 0x08, 0x00, 0x05, 0x2a, 0x08, 0x00, 0x20, 0x01, 0x08, 0x00, 0x05,
+    0x2a, 0x0a, 0x00, 0x0a, 0x01, 0x09, 0x00, 0x02, 0x29, 0x00, 0x00, 0x18,
+    0x00, 0x02, 0x00, 0x0a, 0x00, 0x00, 0x28, 0x00, 0xc7, 0xc4, 0x4e, 0xe3,
+    0x6c, 0x51, 0xa7, 0x33, 0x4b, 0xe8, 0xed, 0x5a, 0x0e, 0xb8, 0x03, 0x1b,
+    0x00, 0x02, 0x00, 0x0b, 0x00, 0x03, 0x28, 0x16, 0x0c, 0x00, 0xf3, 0x6b,
+    0x10, 0x9d, 0x66, 0xf2, 0xa9, 0xa1, 0x12, 0x41, 0x68, 0x38, 0xdb, 0xe5,
+    0x72, 0x77, 0x16, 0x00, 0x16, 0x03, 0x0c, 0x00, 0xf3, 0x6b, 0x10, 0x9d,
+    0x66, 0xf2, 0xa9, 0xa1, 0x12, 0x41, 0x68, 0x38, 0xdb, 0xe5, 0x72, 0x77,
+    0x0a, 0x00, 0x0a, 0x01, 0x0d, 0x00, 0x02, 0x29, 0x00, 0x00, 0x00, 0x00
+};
+
+/* Advertising packet: Flags (0x06) + 128-bit Apple/MMA Service UUID */
+static const uint8_t s_ble_adv_data[21] = {
+    0x02, 0x01, 0x06,
+    0x11, 0x07,
+    0x00, 0xc7, 0xc4, 0x4e, 0xe3, 0x6c, 0x51, 0xa7,
+    0x33, 0x4b, 0xe8, 0xed, 0x5a, 0x0e, 0xb8, 0x03
+};
+
+/* Scan Response packet: Complete Local Name "SMC-PAD" */
+static const uint8_t s_ble_rsp_data[9] = {
+    0x08, 0x09, 'S', 'M', 'C', '-', 'P', 'A', 'D'
+};
+
+#ifndef SMC_HOST_TEST
+static uint16_t ble_cb_read(uint16_t handle, uint16_t offset, uint8_t *buf, uint16_t size) {
+    if (handle == SMC_BLE_GAP_NAME_HANDLE) {
+        static const char dev_name[] = "SMC-PAD";
+        uint16_t len = (uint16_t)(sizeof(dev_name) - 1);
+        if (!buf) return len;
+        if (offset >= len) return 0;
+        uint16_t rem = len - offset;
+        if (size > rem) size = rem;
+        for (uint16_t i = 0; i < size; i++) {
+            buf[i] = (uint8_t)dev_name[offset + i];
+        }
+        return size;
+    }
+    return 0;
+}
+
+static void hal_ble_rx_on_byte(uint8_t byte, void *ctx) {
+    (void)ctx;
+    uint32_t next = (g_ble_rx_fifo.tail + 1u) & (SMC_BLE_RX_BUF_SIZE - 1u);
+    if (next != g_ble_rx_fifo.head) {
+        g_ble_rx_fifo.buffer[g_ble_rx_fifo.tail] = byte;
+        g_ble_rx_fifo.tail = next;
+    }
+}
+
+static void ble_cb_write(uint16_t handle, uint16_t offset, const uint8_t *data, uint16_t len) {
+    if (handle == SMC_BLE_MIDI_HANDLE_VAL && offset == 0 && data && len > 0) {
+        smc_ble_midi_parse_rx(data, len, hal_ble_rx_on_byte, NULL);
+    }
+}
+
+static void ble_cb_event(int event, uint16_t handle, uint16_t value) {
+    switch (event) {
+    case SMCPAD_BLE_CONNECTED:
+        smc_ble_midi_set_connected(&g_ble_engine, true);
+        /* Request low-latency 7.5ms - 15ms connection interval */
+        smcpad_ble_set_conn_interval(6, 12);
+        break;
+    case SMCPAD_BLE_DISCONNECTED:
+        smc_ble_midi_set_connected(&g_ble_engine, false);
+        smc_ble_midi_set_subscribed(&g_ble_engine, false);
+        if (g_ble_enabled) {
+            smcpad_ble_advertise(1);
+        }
+        break;
+    case SMCPAD_BLE_SUBSCRIBE:
+        if (handle == SMC_BLE_MIDI_HANDLE_VAL) {
+            bool sub = (value & 1) != 0;
+            smc_ble_midi_set_subscribed(&g_ble_engine, sub);
+            smc_ble_midi_set_mtu(&g_ble_engine, smcpad_ble_mtu());
+        }
+        break;
+    default:
+        break;
+    }
+}
+
+static const smcpad_ble_callbacks_t s_ble_callbacks = {
+    .read  = ble_cb_read,
+    .write = ble_cb_write,
+    .event = ble_cb_event
+};
+#endif
+
+static bool hal_ble_raw_send(const uint8_t *data, uint16_t len) {
+#ifndef SMC_HOST_TEST
+    if (!g_ble_enabled || !g_ble_engine.subscribed) {
+        return false;
+    }
+    if (smcpad_ble_queued() > 0) {
+        return false;
+    }
+    return (smcpad_ble_notify(SMC_BLE_MIDI_HANDLE_VAL, data, len) == 1);
+#else
+    (void)data; (void)len;
+    return true;
 #endif
 }
 
@@ -283,8 +438,23 @@ void setup(void) {
     /* 2. Initialize SysEx Protocol Engine */
     smc_sysex_init(&g_sysex_engine, &g_config, hal_send_sysex_packet);
 
-    /* 3. Initialize BLE-MIDI Engine */
-    smc_ble_midi_init(&g_ble_engine, NULL);
+    /* 3. Initialize BLE-MIDI Engine & Radio Peripheral */
+    smc_ble_midi_init(&g_ble_engine, hal_ble_raw_send);
+#ifndef SMC_HOST_TEST
+    smcpad_ble_set_name("SMC-PAD");
+    smcpad_ble_begin(&s_ble_callbacks);
+    uint32_t t0 = smcpad_millis();
+    while (!smcpad_ble_ready() && (smcpad_millis() - t0 < 1000)) {
+        smcpad_delay(5);
+    }
+    smcpad_ble_set_profile(s_ble_midi_profile_db, sizeof(s_ble_midi_profile_db));
+    smcpad_ble_set_adv(s_ble_adv_data, sizeof(s_ble_adv_data),
+                       s_ble_rsp_data, sizeof(s_ble_rsp_data),
+                       48, 1);
+    smcpad_ble_advertise(1);
+    g_ble_enabled = true;
+    g_ble_initialized = true;
+#endif
 
     /* 4. Initialize MIDI Dispatcher */
     smc_midi_init(&g_midi_engine, hal_send_midi_packet);
@@ -322,6 +492,13 @@ void loop(void) {
         } else if (cin == 0x05) {
             smc_midi_rx_feed_byte(&g_midi_engine, rx_pkt[1]);
         }
+    }
+
+    /* 1b. Drain incoming BLE-MIDI bytes */
+    while (g_ble_rx_fifo.head != g_ble_rx_fifo.tail) {
+        uint8_t b = g_ble_rx_fifo.buffer[g_ble_rx_fifo.head];
+        g_ble_rx_fifo.head = (g_ble_rx_fifo.head + 1u) & (SMC_BLE_RX_BUF_SIZE - 1u);
+        smc_midi_rx_feed_byte(&g_midi_engine, b);
     }
 
     /* 2. Process Note Repeat rhythmic pulses (Gated duty cycle to prevent polyphony overload) */
@@ -629,7 +806,35 @@ void loop(void) {
             break;
 
         case 3: /* SMCPAD_EV_BUTTON_DOWN */
-            if (hw_ev.index == 8) { /* Shift (Btn 8) */
+            if (hw_ev.index == 0) { /* Bluetooth (Btn 0) */
+                g_ble_enabled = !g_ble_enabled;
+                if (g_ble_enabled) {
+#ifndef SMC_HOST_TEST
+                    if (!g_ble_initialized) {
+                        smcpad_ble_set_name("SMC-PAD");
+                        smcpad_ble_begin(&s_ble_callbacks);
+                        uint32_t t0 = smcpad_millis();
+                        while (!smcpad_ble_ready() && (smcpad_millis() - t0 < 1000)) {
+                            smcpad_delay(5);
+                        }
+                        smcpad_ble_set_profile(s_ble_midi_profile_db, sizeof(s_ble_midi_profile_db));
+                        smcpad_ble_set_adv(s_ble_adv_data, sizeof(s_ble_adv_data),
+                                           s_ble_rsp_data, sizeof(s_ble_rsp_data),
+                                           48, 1);
+                        g_ble_initialized = true;
+                    }
+                    smcpad_ble_advertise(1);
+#endif
+                } else {
+#ifndef SMC_HOST_TEST
+                    smcpad_ble_advertise(0);
+                    smcpad_ble_disconnect();
+#endif
+                    smc_ble_midi_set_connected(&g_ble_engine, false);
+                    smc_ble_midi_set_subscribed(&g_ble_engine, false);
+                    smcpad_led_set(0, 0);
+                }
+            } else if (hw_ev.index == 8) { /* Shift (Btn 8) */
                 g_midi_engine.shift_active = true;
                 smcpad_led_set(8, 1);
                 refresh_shift_status_view();
@@ -728,6 +933,20 @@ void loop(void) {
             break;
         }
     }
+
+    /* 4. Update Bluetooth Status LED */
+    if (!g_ble_enabled) {
+        smcpad_led_set(0, 0);
+    } else {
+        bool connected = (smcpad_ble_connection() > 0) && (smcpad_ble_subscribed(SMC_BLE_MIDI_HANDLE_VAL) > 0);
+        if (connected) {
+            smcpad_led_set(0, 1);
+        } else {
+            smcpad_led_set(0, ((app_get_millis() / 500u) & 1u) != 0);
+        }
+    }
+
+    smcpad_yield();
 #else
     /* Host simulation test queue drain */
     smc_event_t ev;

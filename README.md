@@ -59,6 +59,7 @@ The firmware runs a unidirectional, non-blocking, zero-allocation pipeline:
 ### Normal Performance Mode
 | Control | Action | Function |
 | :--- | :--- | :--- |
+| **BT** | Press (Button 0) | Toggles **Bluetooth LE MIDI** on/off (Blinks: pairing, Solid: connected, Off: disabled) |
 | **Pads 1–16** | Strike / Release | Velocity-sensitive Note-On / Note-Off with Aftertouch |
 | **Knobs 1–8** | Turn | High-resolution 360° Rotary Encoders (MIDI CC) |
 | **PAD BANK** | Press (Button 1) | Toggles between **Bank A** (LED off) and **Bank B** (LED on) |
@@ -131,6 +132,30 @@ No installation or proprietary driver required. Open [`tools/web-configurator.ht
    - Velocity curves and pad sensitivity thresholds.
    - Real-time strike & turn visualizers.
 4. Click **Save to Flash** to store settings permanently in non-volatile flash memory.
+
+---
+
+## 📡 Wireless Bluetooth MIDI (BLE-MIDI)
+
+The firmware natively advertises standard Apple/MMA MIDI over Bluetooth LE as device name `SMC-PAD`.
+
+### Visual Status (BT LED)
+- **Slow Blink (~500 ms period):** Bluetooth active & advertising (pairing mode, ready for host connection).
+- **Solid ON:** Host central connected and subscribed to MIDI notifications.
+- **OFF:** Bluetooth radio disabled. Press physical **BT** button (Button 0) to re-enable.
+
+### Connecting by Operating System:
+- **macOS:** Open **Audio MIDI Setup** $\to$ Window $\to$ Show MIDI Studio $\to$ Click the Bluetooth icon $\to$ Find **SMC-PAD** $\to$ Click **Connect**.
+- **iOS / iPadOS:** Open any MIDI-capable app (GarageBand, AUM, Cubasis, Moog apps) $\to$ Settings $\to$ Bluetooth MIDI Devices $\to$ Select **SMC-PAD**.
+- **Windows 10 / 11:** Settings $\to$ Bluetooth & devices $\to$ Add device $\to$ Bluetooth $\to$ Select **SMC-PAD** (or connect via free utility like **MIDIberry** / **Cakewalk**).
+- **Linux:** Connect via `bluetoothctl` and route MIDI via PipeWire or ALSA BLE-MIDI:
+  ```bash
+  bluetoothctl
+  scan on
+  pair <MAC_ADDRESS>
+  connect <MAC_ADDRESS>
+  ```
+  The device will appear under `aconnect -l` or PipeWire/JACK patchbays as a standard MIDI device.
 
 ---
 
