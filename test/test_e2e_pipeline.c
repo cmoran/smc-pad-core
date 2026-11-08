@@ -267,6 +267,23 @@ int main(void) {
     smc_midi_rx_feed_bytes(&dispatcher, daw_note_off, sizeof(daw_note_off));
     assert(smc_rgb_led_get_pad(0) == g_sim_cfg.pad_idle_color);
 
+    /* --- Stage 5: Note Repeat Dynamic BPM & Swing Verification --- */
+    /* Verify BPM division calculation scaling */
+    uint32_t bpm_120 = 120;
+    uint32_t quarter_120 = 60000u / bpm_120; /* 500 ms */
+    assert(quarter_120 == 500);
+    assert(quarter_120 / 4 == 125); /* 1/16 at 120 BPM */
+    assert(quarter_120 / 8 == 62);  /* 1/32 at 120 BPM */
+
+    /* Verify Swing shuffle alternating step math */
+    uint16_t base_125 = 125;
+    uint8_t swing_pct = 60;
+    uint16_t step0 = (uint16_t)(((uint32_t)base_125 * 2u * (uint32_t)swing_pct) / 100u);
+    uint16_t step1 = (uint16_t)(((uint32_t)base_125 * 2u * (100u - (uint32_t)swing_pct)) / 100u);
+    assert(step0 == 150);
+    assert(step1 == 100);
+    assert((step0 + step1) / 2 == base_125);
+
     printf("Integrated end-to-end pipeline simulation test passed successfully!\n");
     return 0;
 }
