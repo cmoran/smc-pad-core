@@ -138,12 +138,42 @@ static void test_bank_palettes(void)
     printf("PASS: test_bank_palettes\n");
 }
 
+static void test_shift_status_and_boot_animation(void)
+{
+    printf("Running test_shift_status_and_boot_animation...\n");
+    smc_rgb_led_init();
+
+    /* Render shift status: Bank 1, Curve 2 (Hard), Octave -12, Semitone +1 */
+    smc_rgb_led_render_shift_status(1, 2, -12, 1);
+
+    /* Row 1 & 2: Presets (Pads 0..7) */
+    assert(smc_rgb_led_get_pad(1) == SMC_COLOR_WHITE);      /* Active bank 1 is white */
+    assert(smc_rgb_led_get_pad(0) == SMC_COLOR_DIM_AMBER);  /* Inactive bank 0 is dim amber */
+    assert(smc_rgb_led_get_pad(2) == SMC_COLOR_DIM_AMBER);  /* Inactive bank 2 is dim amber */
+
+    /* Row 3: Velocity Curves (Pads 8..11) */
+    assert(smc_rgb_led_get_pad(10) == SMC_COLOR_MAGENTA);     /* Active curve 2 (Pad 10) is bright magenta */
+    assert(smc_rgb_led_get_pad(8)  == SMC_COLOR_DIM_MAGENTA); /* Inactive curve 0 (Pad 8) is dim magenta */
+
+    /* Row 4: Transpose (Pads 12..15) */
+    assert(smc_rgb_led_get_pad(12) == SMC_COLOR_DIM_CYAN);  /* Semitone -1 not active */
+    assert(smc_rgb_led_get_pad(13) == SMC_COLOR_CYAN);      /* Semitone +1 is ACTIVE (semi > 0) */
+    assert(smc_rgb_led_get_pad(14) == SMC_COLOR_BLUE);      /* Octave -12 is ACTIVE (octave < 0) */
+    assert(smc_rgb_led_get_pad(15) == SMC_COLOR_DIM_BLUE);  /* Octave +12 not active */
+
+    /* Run boot animation in test mode (no delay) */
+    smc_rgb_led_boot_animation(NULL, NULL);
+
+    printf("PASS: test_shift_status_and_boot_animation\n");
+}
+
 int main(void)
 {
     printf("\n=== Running SMC-Pad RGB LED Tests ===\n");
     test_initialization_and_defaults();
     test_pad_mapping_and_colors();
     test_bank_palettes();
+    test_shift_status_and_boot_animation();
     test_ws2812_grb_serialization();
     test_buffer_bounds();
     printf("=== All SMC-Pad RGB LED Tests Passed Successfully! ===\n\n");

@@ -118,6 +118,27 @@ bool smc_rgb_led_is_busy(void);
  */
 void smc_rgb_led_show(void);
 
+/**
+ * @brief Render the Shift Status Dashboard across the 4x4 matrix.
+ *
+ * @param bank Active bank index (0..3).
+ * @param velocity_curve Active velocity curve (0..3).
+ * @param octave_offset Current octave offset (-48..+48).
+ * @param semitone_offset Current semitone transpose offset (-12..+12).
+ */
+void smc_rgb_led_render_shift_status(uint8_t bank,
+                                     uint8_t velocity_curve,
+                                     int8_t octave_offset,
+                                     int8_t semitone_offset);
+
+/**
+ * @brief Perform the startup boot animation (center-outward spiral flare).
+ *
+ * @param delay_fn Callback to delay milliseconds (e.g. smcpad_delay or NULL in tests).
+ * @param show_fn Callback to show frame (e.g. smcpad_rgb_show or NULL).
+ */
+void smc_rgb_led_boot_animation(void (*delay_fn)(uint32_t ms), void (*show_fn)(void));
+
 #ifdef __cplusplus
 }
 #endif

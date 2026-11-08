@@ -38,6 +38,7 @@ extern void smcpad_rgb_show(void);
 extern int  smcpad_usbmidi_write(const uint8_t packet[4]);
 extern int  smcpad_usbmidi_read(uint8_t packet[4]);
 extern uint32_t smcpad_millis(void);
+extern void smcpad_delay(uint32_t ms);
 
 typedef struct {
     uint8_t type;
@@ -176,6 +177,46 @@ static void hal_host_sysex_feed(uint8_t b, void *ctx) {
 /* Application Entry Points (setup / loop)                                   */
 /* ========================================================================= */
 
+static void restore_bank_leds(void) {
+#ifndef SMC_HOST_TEST
+    const smc_bank_palette_t *p_pal = smc_rgb_led_get_bank_palette(g_pad_bank);
+    for (int p = 0; p < SMC_NUM_PADS; p++) {
+        smcpad_rgb_set(p, p_pal->idle_color);
+    }
+    smcpad_rgb_show();
+#else
+    smc_rgb_led_set_bank_theme(g_pad_bank);
+    smc_rgb_led_show();
+#endif
+}
+
+static void refresh_shift_status_view(void) {
+    int8_t octave = smc_midi_get_octave_offset(&g_midi_engine);
+    int8_t semi = smc_midi_get_semitone_offset(&g_midi_engine);
+    smc_rgb_led_render_shift_status(g_pad_bank, (uint8_t)g_config.velocity_curve, octave, semi);
+#ifndef SMC_HOST_TEST
+    for (int p = 0; p < SMC_NUM_PADS; p++) {
+        smcpad_rgb_set(p, smc_rgb_led_get_pad(p));
+    }
+    smcpad_rgb_show();
+#else
+    smc_rgb_led_show();
+#endif
+}
+
+static void refresh_repeat_cfg_leds(void) {
+#ifndef SMC_HOST_TEST
+    for (uint8_t p = 0; p < 8; p++) {
+        /* Selected division is White, others are dim blue (0x000030) */
+        smcpad_rgb_set(p, (p == g_repeat_rate_idx) ? SMC_COLOR_WHITE : 0x000030u);
+    }
+    for (uint8_t p = 8; p < SMC_NUM_PADS; p++) {
+        smcpad_rgb_set(p, 0x000000u);
+    }
+    smcpad_rgb_show();
+#endif
+}
+
 void setup(void) {
 #ifndef SMC_HOST_TEST
     /* Handshake with DFU bootloader to confirm successful boot */
@@ -201,41 +242,16 @@ void setup(void) {
     smc_midi_set_ble_sink(&g_midi_engine, hal_send_ble_packet);
     smc_midi_set_host_callbacks(&g_midi_engine, hal_host_note_feedback, hal_host_sysex_feed, NULL);
 
-    /* 5. Set Initial Resting Pad Colors from Bank Palette */
-    const smc_bank_palette_t *pal = smc_rgb_led_get_bank_palette(g_pad_bank);
+    /* 5. Startup Boot Animation */
 #ifndef SMC_HOST_TEST
-    for (int p = 0; p < SMC_NUM_PADS; p++) {
-        smcpad_rgb_set(p, pal->idle_color);
-    }
-    smcpad_rgb_show();
+    smc_rgb_led_boot_animation(smcpad_delay, smcpad_rgb_show);
 #else
     smc_rgb_led_init();
-    smc_rgb_led_set_bank_theme(g_pad_bank);
-    smc_rgb_led_show();
+    smc_rgb_led_boot_animation(NULL, NULL);
 #endif
-}
 
-static void refresh_repeat_cfg_leds(void) {
-#ifndef SMC_HOST_TEST
-    for (uint8_t p = 0; p < 8; p++) {
-        /* Selected division is White, others are dim blue (0x000030) */
-        smcpad_rgb_set(p, (p == g_repeat_rate_idx) ? SMC_COLOR_WHITE : 0x000030u);
-    }
-    for (uint8_t p = 8; p < SMC_NUM_PADS; p++) {
-        smcpad_rgb_set(p, 0x000000u);
-    }
-    smcpad_rgb_show();
-#endif
-}
-
-static void restore_bank_leds(void) {
-#ifndef SMC_HOST_TEST
-    const smc_bank_palette_t *p_pal = smc_rgb_led_get_bank_palette(g_pad_bank);
-    for (int p = 0; p < SMC_NUM_PADS; p++) {
-        smcpad_rgb_set(p, p_pal->idle_color);
-    }
-    smcpad_rgb_show();
-#endif
+    /* 6. Set Initial Resting Pad Colors from Bank Palette */
+    restore_bank_leds();
 }
 
 void loop(void) {
@@ -327,27 +343,24 @@ void loop(void) {
                     /* Shift + Pads 1-8 (indices 0..7): Switch Bank/Preset */
                     g_pad_bank = hw_ev.index % SMC_NUM_BANKS;
                     smc_config_set_pad_bank(g_pad_bank);
-                    restore_bank_leds();
                     smcpad_led_set(1, (g_pad_bank > 0));
+                    refresh_shift_status_view();
                 } else if (hw_ev.index >= 8 && hw_ev.index <= 11) {
                     /* Shift + Pads 9-12 (indices 8..11): Velocity Curve (Linear, Soft, Hard, Fixed) */
                     g_config.velocity_curve = (smc_velocity_curve_type_t)(hw_ev.index - 8);
-                    smcpad_rgb_set(hw_ev.index, SMC_COLOR_WHITE);
-                    smcpad_rgb_show();
+                    refresh_shift_status_view();
                 } else if (hw_ev.index == 12) {
                     /* Shift + Pad 13 (index 12): Transpose Semitone Down (-1) */
                     int8_t semi = smc_midi_get_semitone_offset(&g_midi_engine) - 1;
                     if (semi < -12) semi = -12;
                     smc_midi_set_semitone_offset(&g_midi_engine, semi);
-                    smcpad_rgb_set(12, SMC_COLOR_WHITE);
-                    smcpad_rgb_show();
+                    refresh_shift_status_view();
                 } else if (hw_ev.index == 13) {
                     /* Shift + Pad 14 (index 13): Transpose Semitone Up (+1) */
                     int8_t semi = smc_midi_get_semitone_offset(&g_midi_engine) + 1;
                     if (semi > 12) semi = 12;
                     smc_midi_set_semitone_offset(&g_midi_engine, semi);
-                    smcpad_rgb_set(13, SMC_COLOR_WHITE);
-                    smcpad_rgb_show();
+                    refresh_shift_status_view();
                 } else if (hw_ev.index == 14 || hw_ev.index == 15) {
                     /* Track held status for dual-press detection */
                     g_held_pads_mask |= (uint16_t)(1u << hw_ev.index);
@@ -357,24 +370,18 @@ void loop(void) {
                         g_octave_offset = 0;
                         smc_midi_set_octave_offset(&g_midi_engine, 0);
                         smc_midi_set_semitone_offset(&g_midi_engine, 0);
-                        smcpad_rgb_set(14, SMC_COLOR_WHITE);
-                        smcpad_rgb_set(15, SMC_COLOR_WHITE);
-                        smcpad_rgb_show();
                     } else if (hw_ev.index == 14) {
                         /* Shift + Pad 15: Octave Down (-12) */
                         g_octave_offset -= 12;
                         if (g_octave_offset < -48) g_octave_offset = -48;
                         smc_midi_set_octave_offset(&g_midi_engine, g_octave_offset);
-                        smcpad_rgb_set(14, SMC_COLOR_WHITE);
-                        smcpad_rgb_show();
                     } else {
                         /* Shift + Pad 16: Octave Up (+12) */
                         g_octave_offset += 12;
                         if (g_octave_offset > 48) g_octave_offset = 48;
                         smc_midi_set_octave_offset(&g_midi_engine, g_octave_offset);
-                        smcpad_rgb_set(15, SMC_COLOR_WHITE);
-                        smcpad_rgb_show();
                     }
+                    refresh_shift_status_view();
                 }
                 break;
             }
@@ -414,9 +421,7 @@ void loop(void) {
             }
 
             if (g_midi_engine.shift_active) {
-                const smc_bank_palette_t *p_pal = smc_rgb_led_get_bank_palette(g_pad_bank);
-                smcpad_rgb_set(hw_ev.index, p_pal->idle_color);
-                smcpad_rgb_show();
+                refresh_shift_status_view();
                 break;
             }
 
@@ -473,6 +478,7 @@ void loop(void) {
             if (hw_ev.index == 8) { /* Shift (Btn 8) */
                 g_midi_engine.shift_active = true;
                 smcpad_led_set(8, 1);
+                refresh_shift_status_view();
             } else if (hw_ev.index == 9) { /* Note Repeat (Btn 9) */
                 g_note_repeat_btn_held = true;
                 if (g_midi_engine.shift_active) {

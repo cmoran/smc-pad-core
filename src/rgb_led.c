@@ -201,3 +201,72 @@ void smc_rgb_led_show(void)
 
     s_dirty = false;
 }
+
+void smc_rgb_led_render_shift_status(uint8_t bank,
+                                     uint8_t velocity_curve,
+                                     int8_t octave_offset,
+                                     int8_t semitone_offset)
+{
+    /* Rows 1 & 2 (Pads 0..7): Presets / Bank selection */
+    for (uint8_t p = 0; p < 8; p++) {
+        uint32_t color = (p == (bank & 0x03u)) ? SMC_COLOR_WHITE : SMC_COLOR_DIM_AMBER;
+        smc_rgb_led_set_pad(p, color);
+    }
+
+    /* Row 3 (Pads 8..11): Velocity Curves (0: Linear, 1: Soft, 2: Hard, 3: Fixed) */
+    for (uint8_t c = 0; c < 4; c++) {
+        uint8_t pad = 8 + c;
+        uint32_t color = (c == (velocity_curve & 0x03u)) ? SMC_COLOR_MAGENTA : SMC_COLOR_DIM_MAGENTA;
+        smc_rgb_led_set_pad(pad, color);
+    }
+
+    /* Row 4: Transposition (Pads 12..15)
+     * Pad 12: Semitone -1
+     * Pad 13: Semitone +1
+     * Pad 14: Octave -12
+     * Pad 15: Octave +12
+     */
+    smc_rgb_led_set_pad(12, (semitone_offset < 0) ? SMC_COLOR_CYAN : SMC_COLOR_DIM_CYAN);
+    smc_rgb_led_set_pad(13, (semitone_offset > 0) ? SMC_COLOR_CYAN : SMC_COLOR_DIM_CYAN);
+    smc_rgb_led_set_pad(14, (octave_offset < 0)   ? SMC_COLOR_BLUE : SMC_COLOR_DIM_BLUE);
+    smc_rgb_led_set_pad(15, (octave_offset > 0)   ? SMC_COLOR_BLUE : SMC_COLOR_DIM_BLUE);
+}
+
+void smc_rgb_led_boot_animation(void (*delay_fn)(uint32_t ms), void (*show_fn)(void))
+{
+    static const uint8_t center_spiral[4] = { 5, 6, 10, 9 };
+    static const uint8_t perimeter[12] = { 4, 8, 12, 13, 14, 15, 11, 7, 3, 2, 1, 0 };
+    static const uint32_t spiral_colors[12] = {
+        0x00E0FF, 0x20A0FF, 0x5060FF, 0x8020FF,
+        0xB000FF, 0xE000E0, 0xFF00B0, 0xFF0070,
+        0xFF0040, 0xFF3010, 0xFF8000, 0x00FF80
+    };
+
+    /* 1. Clear matrix */
+    smc_rgb_led_set_all(SMC_COLOR_BLACK);
+    if (show_fn) show_fn();
+
+    /* 2. Center 4 pads spiral ignite */
+    for (uint8_t i = 0; i < 4; i++) {
+        smc_rgb_led_set_pad(center_spiral[i], 0x00FFFF);
+        if (show_fn) show_fn();
+        if (delay_fn) delay_fn(30);
+    }
+
+    /* 3. Outer perimeter chase in clockwise spiral */
+    for (uint8_t i = 0; i < 12; i++) {
+        smc_rgb_led_set_pad(perimeter[i], spiral_colors[i]);
+        if (show_fn) show_fn();
+        if (delay_fn) delay_fn(25);
+    }
+
+    /* 4. Matrix flare pulse */
+    smc_rgb_led_set_all(SMC_COLOR_WHITE);
+    if (show_fn) show_fn();
+    if (delay_fn) delay_fn(80);
+
+    /* 5. Clear before bank transition */
+    smc_rgb_led_set_all(SMC_COLOR_BLACK);
+    if (show_fn) show_fn();
+    if (delay_fn) delay_fn(40);
+}
