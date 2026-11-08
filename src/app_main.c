@@ -6,8 +6,10 @@
  * - 1 kHz timer scan of 16-column matrix (buttons & encoders with Gray code decoding)
  * - Dual HCF4051 ADC scan with dynamic auto-zero baseline calibration
  * - Single-wire WS2812/SK6812 RGB LED visual feedback at 6 MHz via SPI1 DMA
- * - Lock-free ring buffer between ISRs and main event loop
- * - USB-MIDI Note-On, Note-Off, CC dispatch and hardware Panic protocol
+ * - Non-volatile Flash configuration & 4 virtual banks (pads & encoders)
+ * - Open SysEx protocol (0x7D) for bidirectional WebMIDI parameter tuning
+ * - Dual-output concurrent USB-MIDI and BLE-MIDI dispatching
+ * - Host DAW reactive LED feedback via incoming MIDI Note-On/CC
  */
 
 #include "smc_hw.h"
@@ -17,6 +19,9 @@
 #include "pad_adc.h"
 #include "midi_dispatcher.h"
 #include "rgb_led.h"
+#include "smc_config.h"
+#include "sysex_protocol.h"
+#include "ble_midi.h"
 
 /* Peripheral hardware access macros */
 #define REG32(addr) (*(volatile uint32_t *)(addr))
@@ -27,14 +32,13 @@ static smc_encoder_state_t   g_encoder_engine;
 static smc_matrix_state_t    g_matrix_engine;
 static smc_pad_matrix_t      g_pad_engine;
 static smc_midi_dispatcher_t g_midi_engine;
+static smc_config_t          g_config;
+static smc_sysex_engine_t    g_sysex_engine;
+static smc_ble_midi_t        g_ble_engine;
 
 static volatile uint32_t     g_system_ticks = 0;
 static uint8_t               g_pad_bank = 0;
 static uint8_t               g_encoder_bank = 0;
-
-/* Visual theme colors */
-#define PAD_COLOR_IDLE       SMC_COLOR_DIM_BLUE   /* 0x000020 */
-#define PAD_COLOR_HIT        SMC_COLOR_GREEN      /* 0x00FF00 */
 
 /* ========================================================================= */
 /* Hardware Callbacks (HAL)                                                  */
@@ -148,7 +152,6 @@ static void hal_settling_delay_us(uint32_t us) {
 static uint16_t hal_read_adc_ch3(void) {
     /* PA4 / 4051 #1 COM (Pads 0..7) */
 #ifndef SMC_HOST_TEST
-    /* In target runtime, reading hardware SAR ADC register */
     return (uint16_t)(REG32(0x1E0E04u) & 0x03FFu); /* 10-bit SAR ADC */
 #else
     return 0;
@@ -184,6 +187,65 @@ static void hal_send_midi_packet(const smc_midi_raw_msg_t *msg) {
 #endif
 }
 
+static void hal_send_ble_packet(const smc_midi_raw_msg_t *msg) {
+    if (msg && msg->len > 0) {
+        smc_ble_midi_send_message(&g_ble_engine, msg->bytes, msg->len, g_system_ticks);
+    }
+}
+
+static void hal_send_sysex_packet(const uint8_t *data, size_t len) {
+#ifndef SMC_HOST_TEST
+    extern int smcpad_usbmidi_write(const uint8_t pkt[4]);
+    size_t offset = 0;
+    while (offset < len) {
+        size_t rem = len - offset;
+        uint8_t cin = 0x04;
+        uint8_t p[4] = { 0, 0, 0, 0 };
+        if (rem >= 3) {
+            p[1] = data[offset++];
+            p[2] = data[offset++];
+            p[3] = data[offset++];
+            if (rem == 3 && p[3] == 0xF7) cin = 0x07;
+        } else if (rem == 2) {
+            p[1] = data[offset++];
+            p[2] = data[offset++];
+            cin = 0x06;
+        } else {
+            p[1] = data[offset++];
+            cin = 0x05;
+        }
+        p[0] = cin;
+        smcpad_usbmidi_write(p);
+    }
+#endif
+    /* Transmit concurrently over BLE if subscribed */
+    smc_ble_midi_send_sysex(&g_ble_engine, data, (uint16_t)len, g_system_ticks);
+}
+
+static void hal_host_note_feedback(uint8_t ch, uint8_t note, uint8_t vel, void *ctx) {
+    (void)ch;
+    (void)ctx;
+    uint8_t bank = smc_config_get_pad_bank();
+    for (uint8_t p = 0; p < SMC_NUM_PADS; p++) {
+        if (g_config.pads[bank][p].note == note) {
+            if (vel > 0) {
+                uint32_t color = (g_config.led_mode == SMC_LED_MODE_HOST)
+                    ? (((uint32_t)vel * 2u) << 8) | vel /* Custom shade */
+                    : g_config.pad_hit_color;
+                smc_rgb_led_set_pad(p, color);
+            } else {
+                smc_rgb_led_set_pad(p, g_config.pad_idle_color);
+            }
+            smc_rgb_led_show();
+        }
+    }
+}
+
+static void hal_host_sysex_feed(uint8_t b, void *ctx) {
+    (void)ctx;
+    smc_sysex_feed_byte(&g_sysex_engine, b);
+}
+
 /* ========================================================================= */
 /* Periodic 1 kHz Timer Tick ISR (Alternating Scan & LED Multiplexing)        */
 /* ========================================================================= */
@@ -217,10 +279,13 @@ int main(void) {
     /* 2. Initialize SPSC Ring Buffer */
     smc_queue_init(&g_event_queue);
 
-    /* 3. Initialize Rotary Encoder Engine (2 substeps per click) */
+    /* 3. Initialize Configuration Engine from non-volatile storage */
+    smc_config_init(&g_config, NULL, NULL);
+
+    /* 4. Initialize Rotary Encoder Engine (2 substeps per click) */
     smc_encoder_init(&g_encoder_engine, 2);
 
-    /* 4. Initialize Key Matrix & LED Scanner */
+    /* 5. Initialize Key Matrix & LED Scanner */
     smc_matrix_hal_t m_hal = {
         .sr_set_clk = hal_sr_clk,
         .sr_set_dat = hal_sr_dat,
@@ -233,39 +298,53 @@ int main(void) {
     };
     smc_matrix_init(&g_matrix_engine, &m_hal);
 
-    /* 5. Initialize Dual-Mux Pad ADC Engine with Auto-Zero Baseline */
+    /* 6. Initialize Dual-Mux Pad ADC Engine with loaded configuration */
     smc_pad_hal_t p_hal = {
         .set_mux_channel = hal_set_mux_channel,
         .settling_delay_us = hal_settling_delay_us,
         .read_adc_ch3 = hal_read_adc_ch3,
         .read_adc_ch4 = hal_read_adc_ch4
     };
-    smc_pad_init(&g_pad_engine, &p_hal, 50, 25, 1000, 3, VELOCITY_CURVE_LINEAR);
+    smc_pad_init(&g_pad_engine, &p_hal,
+                 g_config.strike_threshold,
+                 g_config.release_threshold,
+                 g_config.dynamic_range,
+                 g_config.scan_window_ms,
+                 (smc_velocity_curve_type_t)g_config.velocity_curve);
     smc_pad_calibrate_baseline(&g_pad_engine);
 
-    /* 6. Initialize MIDI Dispatcher */
-    smc_midi_init(&g_midi_engine, hal_send_midi_packet);
+    /* 7. Initialize BLE-MIDI Peripheral Engine */
+    smc_ble_midi_init(&g_ble_engine, NULL);
 
-    /* 7. Initialize Pad RGB LEDs & Set Resting Theme */
+    /* 8. Initialize SysEx Protocol Engine */
+    smc_sysex_init(&g_sysex_engine, &g_config, hal_send_sysex_packet);
+
+    /* 9. Initialize MIDI Dispatcher with Dual Outputs and Host RX */
+    smc_midi_init(&g_midi_engine, hal_send_midi_packet);
+    smc_midi_set_config(&g_midi_engine, &g_config);
+    smc_midi_set_ble_sink(&g_midi_engine, hal_send_ble_packet);
+    smc_midi_set_host_callbacks(&g_midi_engine, hal_host_note_feedback, hal_host_sysex_feed, NULL);
+
+    /* 10. Initialize Pad RGB LEDs & Set Resting Theme from Config */
     smc_rgb_led_init();
-    smc_rgb_led_set_all(PAD_COLOR_IDLE);
+    smc_rgb_led_set_all(g_config.pad_idle_color);
     smc_rgb_led_show();
 
-    /* 8. Main Event Processing Loop (Lock-Free Consumer) */
+    /* 11. Main Event Processing Loop (Lock-Free Consumer) */
     smc_event_t ev;
     while (1) {
         if (smc_queue_pop(&g_event_queue, &ev)) {
             switch (ev.type) {
             case EVENT_PAD_STRIKE:
                 /* Illuminate pad in active hit color */
-                smc_rgb_led_set_pad(ev.index, PAD_COLOR_HIT);
+                smc_rgb_led_set_pad(ev.index, g_config.pad_hit_color);
                 smc_rgb_led_show();
                 smc_midi_process_event(&g_midi_engine, &g_encoder_engine, &ev);
                 break;
 
             case EVENT_PAD_RELEASE:
                 /* Restore resting idle color */
-                smc_rgb_led_set_pad(ev.index, PAD_COLOR_IDLE);
+                smc_rgb_led_set_pad(ev.index, g_config.pad_idle_color);
                 smc_rgb_led_show();
                 smc_midi_process_event(&g_midi_engine, &g_encoder_engine, &ev);
                 break;
@@ -281,15 +360,17 @@ int main(void) {
                 } else if (ev.index == BTN_PAUSE && g_midi_engine.shift_active) {
                     /* Shift + Pause = Panic (All Notes Off) */
                     smc_midi_panic(&g_midi_engine);
-                    smc_rgb_led_set_all(PAD_COLOR_IDLE);
+                    smc_rgb_led_set_all(g_config.pad_idle_color);
                     smc_rgb_led_show();
                 } else if (ev.index == BTN_PAD_BANK) {
                     /* Cycle pad bank 0..3 */
                     g_pad_bank = (g_pad_bank + 1) & 3;
+                    smc_config_set_pad_bank(g_pad_bank);
                     smc_matrix_set_led(&g_matrix_engine, LED_PAD_BANK, (g_pad_bank > 0));
                 } else if (ev.index == BTN_KNOB_BANK) {
                     /* Cycle encoder bank 0..3 */
                     g_encoder_bank = (g_encoder_bank + 1) & 3;
+                    smc_config_set_encoder_bank(g_encoder_bank);
                     smc_encoder_set_bank(&g_encoder_engine, g_encoder_bank);
                     smc_matrix_set_led(&g_matrix_engine, LED_KNOB_BANK, (g_encoder_bank > 0));
                 }

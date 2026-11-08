@@ -10,7 +10,7 @@ CFLAGS ?= -Wall -Wextra -Werror -std=c99 -pedantic -O2 -Iinclude -DSMC_HOST_TEST
 BUILD_DIR ?= build
 
 # Host sources and objects
-HOST_SRCS := src/ring_buffer.c src/encoder.c src/matrix.c src/pad_adc.c src/velocity_curve.c src/midi_dispatcher.c src/rgb_led.c
+HOST_SRCS := src/ring_buffer.c src/encoder.c src/matrix.c src/pad_adc.c src/velocity_curve.c src/midi_dispatcher.c src/rgb_led.c src/smc_config.c src/sysex_protocol.c src/ble_midi.c
 HOST_OBJS := $(patsubst src/%.c,$(BUILD_DIR)/host_%.o,$(HOST_SRCS))
 
 HOST_TESTS := $(BUILD_DIR)/test_ring_buffer \
@@ -19,6 +19,9 @@ HOST_TESTS := $(BUILD_DIR)/test_ring_buffer \
               $(BUILD_DIR)/test_pad_adc \
               $(BUILD_DIR)/test_midi_dispatcher \
               $(BUILD_DIR)/test_rgb_led \
+              $(BUILD_DIR)/test_config \
+              $(BUILD_DIR)/test_sysex \
+              $(BUILD_DIR)/test_ble_midi \
               $(BUILD_DIR)/test_e2e_pipeline
 
 # JieLi Target cross-compiler setup
@@ -55,10 +58,19 @@ $(BUILD_DIR)/test_matrix: test/test_matrix.c $(BUILD_DIR)/host_ring_buffer.o $(B
 $(BUILD_DIR)/test_pad_adc: test/test_pad_adc.c $(BUILD_DIR)/host_ring_buffer.o $(BUILD_DIR)/host_velocity_curve.o $(BUILD_DIR)/host_pad_adc.o
 	$(CC) $(CFLAGS) $^ -o $@
 
-$(BUILD_DIR)/test_midi_dispatcher: test/test_midi_dispatcher.c $(BUILD_DIR)/host_ring_buffer.o $(BUILD_DIR)/host_encoder.o $(BUILD_DIR)/host_midi_dispatcher.o
+$(BUILD_DIR)/test_midi_dispatcher: test/test_midi_dispatcher.c $(BUILD_DIR)/host_ring_buffer.o $(BUILD_DIR)/host_encoder.o $(BUILD_DIR)/host_midi_dispatcher.o $(BUILD_DIR)/host_smc_config.o
 	$(CC) $(CFLAGS) $^ -o $@
 
 $(BUILD_DIR)/test_rgb_led: test/test_rgb_led.c $(BUILD_DIR)/host_rgb_led.o
+	$(CC) $(CFLAGS) $^ -o $@
+
+$(BUILD_DIR)/test_config: test/test_config.c $(BUILD_DIR)/host_smc_config.o
+	$(CC) $(CFLAGS) $^ -o $@
+
+$(BUILD_DIR)/test_sysex: test/test_sysex.c $(BUILD_DIR)/host_smc_config.o $(BUILD_DIR)/host_sysex_protocol.o
+	$(CC) $(CFLAGS) $^ -o $@
+
+$(BUILD_DIR)/test_ble_midi: test/test_ble_midi.c $(BUILD_DIR)/host_ble_midi.o $(BUILD_DIR)/host_midi_dispatcher.o $(BUILD_DIR)/host_smc_config.o $(BUILD_DIR)/host_ring_buffer.o $(BUILD_DIR)/host_encoder.o
 	$(CC) $(CFLAGS) $^ -o $@
 
 $(BUILD_DIR)/test_e2e_pipeline: test/test_e2e_pipeline.c $(HOST_OBJS)
@@ -72,6 +84,9 @@ test: $(HOST_TESTS)
 	@$(BUILD_DIR)/test_pad_adc
 	@$(BUILD_DIR)/test_midi_dispatcher
 	@$(BUILD_DIR)/test_rgb_led
+	@$(BUILD_DIR)/test_config
+	@$(BUILD_DIR)/test_sysex
+	@$(BUILD_DIR)/test_ble_midi
 	@$(BUILD_DIR)/test_e2e_pipeline
 	@echo "=== All Host Tests Passed Successfully ==="
 

@@ -5,6 +5,7 @@ reference/
 tools/jl-toolchain/
 tools/jl-postbuild/
 tools/bin/
+tools/.cache/
 
 # Build artifacts
 build/
