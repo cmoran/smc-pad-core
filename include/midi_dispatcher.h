@@ -41,11 +41,16 @@ typedef struct {
     /* Active note tracking bitmask (bit i = pad i is currently sounding) */
     uint16_t active_pads_mask;
 
+    /* Sounding Note Tracking per pad to guarantee zero stuck notes (0xFF = none) */
+    uint8_t sounding_notes[SMC_NUM_PADS];
+    uint8_t sounding_channels[SMC_NUM_PADS];
+
     /* Shift state tracker */
     bool shift_active;
 
-    /* Octave & Channel Transpose Offsets */
-    int8_t  octave_offset;      /* Semitones offset (-48..+48), multiple of 12 */
+    /* Octave, Semitone & Channel Transpose Offsets */
+    int8_t  octave_offset;      /* Octave offset (-48..+48), multiple of 12 */
+    int8_t  semitone_offset;    /* Semitone offset (-12..+12) */
     int8_t  channel_override;   /* -1 = use per-pad channel, 0..15 = global override */
 
     /* Dual Output Transport Callbacks */
@@ -119,6 +124,16 @@ void smc_midi_set_octave_offset(smc_midi_dispatcher_t *dispatcher, int8_t semito
  * @brief Get current octave offset in semitones.
  */
 int8_t smc_midi_get_octave_offset(const smc_midi_dispatcher_t *dispatcher);
+
+/**
+ * @brief Set global semitone transpose offset (-12..+12).
+ */
+void smc_midi_set_semitone_offset(smc_midi_dispatcher_t *dispatcher, int8_t semitones);
+
+/**
+ * @brief Get current semitone transpose offset.
+ */
+int8_t smc_midi_get_semitone_offset(const smc_midi_dispatcher_t *dispatcher);
 
 /**
  * @brief Set global MIDI channel override (-1 for per-pad config, 0..15 to override).

@@ -24,6 +24,7 @@
 #include "smc_config.h"
 #include "sysex_protocol.h"
 #include "ble_midi.h"
+#include "velocity_curve.h"
 
 #define REG32(addr) (*(volatile uint32_t *)(addr))
 
@@ -36,12 +37,22 @@ extern void smcpad_rgb_set(int pad, uint32_t rgb);
 extern void smcpad_rgb_show(void);
 extern int  smcpad_usbmidi_write(const uint8_t packet[4]);
 extern int  smcpad_usbmidi_read(uint8_t packet[4]);
+extern uint32_t smcpad_millis(void);
 
 typedef struct {
     uint8_t type;
     uint8_t index;
     int16_t value;
 } smcpad_hw_event_t;
+
+static inline uint32_t app_get_millis(void) {
+    return smcpad_millis();
+}
+#else
+static uint32_t s_host_millis = 0;
+static inline uint32_t app_get_millis(void) {
+    return s_host_millis++;
+}
 #endif
 
 /* Static system state structures (Strict zero dynamic allocation) */
@@ -58,11 +69,27 @@ static uint8_t               g_encoder_bank = 0;
 static int8_t                g_octave_offset = 0;
 static int8_t                g_channel_offset = -1;
 
+/* Note Repeat Division Table (at 120 BPM) */
+static const uint16_t g_repeat_periods_ms[8] = {
+    500, /* Pad 1: 1/4 */
+    333, /* Pad 2: 1/4t */
+    250, /* Pad 3: 1/8 */
+    167, /* Pad 4: 1/8t */
+    125, /* Pad 5: 1/16 (default) */
+    83,  /* Pad 6: 1/16t */
+    62,  /* Pad 7: 1/32 */
+    42   /* Pad 8: 1/32t */
+};
+
 /* Note Repeat Engine state */
 static bool                  g_note_repeat_enabled = false;
+static bool                  g_note_repeat_cfg_mode = false;
+static bool                  g_note_repeat_btn_held = false;
+static uint8_t               g_repeat_rate_idx = 4; /* Default 1/16 = 125 ms */
+static uint32_t              g_repeat_cycle_start_ms = 0;
+static bool                  g_repeat_gate_active = false;
 static uint16_t              g_held_pads_mask = 0;
 static uint8_t               g_pad_velocities[SMC_NUM_PADS];
-static uint32_t              g_last_repeat_tick = 0;
 
 /* ========================================================================= */
 /* Hardware Callbacks (HAL)                                                  */
@@ -188,6 +215,29 @@ void setup(void) {
 #endif
 }
 
+static void refresh_repeat_cfg_leds(void) {
+#ifndef SMC_HOST_TEST
+    for (uint8_t p = 0; p < 8; p++) {
+        /* Selected division is White, others are dim blue (0x000030) */
+        smcpad_rgb_set(p, (p == g_repeat_rate_idx) ? SMC_COLOR_WHITE : 0x000030u);
+    }
+    for (uint8_t p = 8; p < SMC_NUM_PADS; p++) {
+        smcpad_rgb_set(p, 0x000000u);
+    }
+    smcpad_rgb_show();
+#endif
+}
+
+static void restore_bank_leds(void) {
+#ifndef SMC_HOST_TEST
+    const smc_bank_palette_t *p_pal = smc_rgb_led_get_bank_palette(g_pad_bank);
+    for (int p = 0; p < SMC_NUM_PADS; p++) {
+        smcpad_rgb_set(p, p_pal->idle_color);
+    }
+    smcpad_rgb_show();
+#endif
+}
+
 void loop(void) {
     g_system_ticks++;
 
@@ -208,22 +258,51 @@ void loop(void) {
         }
     }
 
-    /* 2. Process Note Repeat rhythmic pulses (1/16th note = 125 ms) */
-    if (g_note_repeat_enabled && g_held_pads_mask > 0) {
-        if ((g_system_ticks - g_last_repeat_tick) >= 125) {
-            g_last_repeat_tick = g_system_ticks;
-            for (uint8_t p = 0; p < SMC_NUM_PADS; p++) {
-                if (g_held_pads_mask & (1u << p)) {
-                    smc_event_t ev_off = { .type = EVENT_PAD_RELEASE, .index = p, .value = 0 };
-                    smc_midi_process_event(&g_midi_engine, &g_encoder_engine, &ev_off);
+    /* 2. Process Note Repeat rhythmic pulses (Gated duty cycle to prevent polyphony overload) */
+    if (g_note_repeat_enabled && g_held_pads_mask > 0 && !g_note_repeat_cfg_mode) {
+        uint32_t now = app_get_millis();
+        uint16_t period = g_repeat_periods_ms[g_repeat_rate_idx];
+        uint16_t gate_ms = (uint16_t)((uint32_t)period * 60u / 100u);
+        if (gate_ms < 15) gate_ms = 15;
 
-                    smc_event_t ev_on = { .type = EVENT_PAD_STRIKE, .index = p, .value = g_pad_velocities[p] };
-                    smc_midi_process_event(&g_midi_engine, &g_encoder_engine, &ev_on);
+        if (!g_repeat_gate_active) {
+            if ((now - g_repeat_cycle_start_ms >= period) || (g_repeat_cycle_start_ms == 0)) {
+                g_repeat_cycle_start_ms = now;
+                g_repeat_gate_active = true;
 
-                    smcpad_rgb_set(p, smc_rgb_led_get_bank_palette(g_pad_bank)->hit_color);
+                for (uint8_t p = 0; p < SMC_NUM_PADS; p++) {
+                    if (g_held_pads_mask & (1u << p)) {
+                        smc_event_t ev_on = {
+                            .type = EVENT_PAD_STRIKE,
+                            .index = p,
+                            .value = g_pad_velocities[p],
+                            .timestamp = now
+                        };
+                        smc_midi_process_event(&g_midi_engine, &g_encoder_engine, &ev_on);
+                        smcpad_rgb_set(p, smc_rgb_led_get_bank_palette(g_pad_bank)->hit_color);
+                    }
                 }
+                smcpad_rgb_show();
             }
-            smcpad_rgb_show();
+        } else {
+            /* Gate active: check if 60% gate interval elapsed */
+            if (now - g_repeat_cycle_start_ms >= gate_ms) {
+                g_repeat_gate_active = false;
+
+                for (uint8_t p = 0; p < SMC_NUM_PADS; p++) {
+                    if (g_held_pads_mask & (1u << p)) {
+                        smc_event_t ev_off = {
+                            .type = EVENT_PAD_RELEASE,
+                            .index = p,
+                            .value = 0,
+                            .timestamp = now
+                        };
+                        smc_midi_process_event(&g_midi_engine, &g_encoder_engine, &ev_off);
+                        smcpad_rgb_set(p, smc_rgb_led_get_bank_palette(g_pad_bank)->idle_color);
+                    }
+                }
+                smcpad_rgb_show();
+            }
         }
     }
 
@@ -233,37 +312,107 @@ void loop(void) {
         smc_event_t ev;
         switch (hw_ev.type) {
         case 1: /* SMCPAD_EV_PAD_ON (Pad Strike) */
-            if (g_midi_engine.shift_active) {
-                /* Shift + Pad 0..3: Direct Bank Select */
-                if (hw_ev.index < 4) {
-                    g_pad_bank = hw_ev.index;
-                    smc_config_set_pad_bank(g_pad_bank);
-                    const smc_bank_palette_t *p_pal = smc_rgb_led_get_bank_palette(g_pad_bank);
-                    for (int p = 0; p < SMC_NUM_PADS; p++) smcpad_rgb_set(p, p_pal->idle_color);
-                    smcpad_rgb_show();
-                    smcpad_led_set(1, (g_pad_bank > 0));
-                } else if (hw_ev.index >= 4 && hw_ev.index < 8) {
-                    /* Shift + Pad 4..7: Velocity Curve Select */
-                    g_config.velocity_curve = hw_ev.index - 4;
-                    smcpad_rgb_set(hw_ev.index, SMC_COLOR_WHITE);
-                    smcpad_rgb_show();
+            /* If in Note Repeat Configuration Mode: */
+            if (g_note_repeat_cfg_mode) {
+                if (hw_ev.index < 8) {
+                    g_repeat_rate_idx = hw_ev.index;
+                    refresh_repeat_cfg_leds();
                 }
                 break;
             }
 
-            g_held_pads_mask |= (uint16_t)(1u << hw_ev.index);
-            g_pad_velocities[hw_ev.index] = (uint8_t)hw_ev.value;
+            /* If Shift is active: execute stock Shift shortcuts instead of emitting Note-On */
+            if (g_midi_engine.shift_active) {
+                if (hw_ev.index < 8) {
+                    /* Shift + Pads 1-8 (indices 0..7): Switch Bank/Preset */
+                    g_pad_bank = hw_ev.index % SMC_NUM_BANKS;
+                    smc_config_set_pad_bank(g_pad_bank);
+                    restore_bank_leds();
+                    smcpad_led_set(1, (g_pad_bank > 0));
+                } else if (hw_ev.index >= 8 && hw_ev.index <= 11) {
+                    /* Shift + Pads 9-12 (indices 8..11): Velocity Curve (Linear, Soft, Hard, Fixed) */
+                    g_config.velocity_curve = (smc_velocity_curve_type_t)(hw_ev.index - 8);
+                    smcpad_rgb_set(hw_ev.index, SMC_COLOR_WHITE);
+                    smcpad_rgb_show();
+                } else if (hw_ev.index == 12) {
+                    /* Shift + Pad 13 (index 12): Transpose Semitone Down (-1) */
+                    int8_t semi = smc_midi_get_semitone_offset(&g_midi_engine) - 1;
+                    if (semi < -12) semi = -12;
+                    smc_midi_set_semitone_offset(&g_midi_engine, semi);
+                    smcpad_rgb_set(12, SMC_COLOR_WHITE);
+                    smcpad_rgb_show();
+                } else if (hw_ev.index == 13) {
+                    /* Shift + Pad 14 (index 13): Transpose Semitone Up (+1) */
+                    int8_t semi = smc_midi_get_semitone_offset(&g_midi_engine) + 1;
+                    if (semi > 12) semi = 12;
+                    smc_midi_set_semitone_offset(&g_midi_engine, semi);
+                    smcpad_rgb_set(13, SMC_COLOR_WHITE);
+                    smcpad_rgb_show();
+                } else if (hw_ev.index == 14 || hw_ev.index == 15) {
+                    /* Track held status for dual-press detection */
+                    g_held_pads_mask |= (uint16_t)(1u << hw_ev.index);
 
-            ev.type = EVENT_PAD_STRIKE;
-            ev.index = hw_ev.index;
-            ev.value = hw_ev.value;
-            smcpad_rgb_set(ev.index, smc_rgb_led_get_bank_palette(g_pad_bank)->hit_color);
-            smcpad_rgb_show();
-            smc_midi_process_event(&g_midi_engine, &g_encoder_engine, &ev);
+                    /* Shift + Pad 15 & Pad 16 dual-press: Reset Transpose & Octave */
+                    if ((g_held_pads_mask & (1u << 14)) && (g_held_pads_mask & (1u << 15))) {
+                        g_octave_offset = 0;
+                        smc_midi_set_octave_offset(&g_midi_engine, 0);
+                        smc_midi_set_semitone_offset(&g_midi_engine, 0);
+                        smcpad_rgb_set(14, SMC_COLOR_WHITE);
+                        smcpad_rgb_set(15, SMC_COLOR_WHITE);
+                        smcpad_rgb_show();
+                    } else if (hw_ev.index == 14) {
+                        /* Shift + Pad 15: Octave Down (-12) */
+                        g_octave_offset -= 12;
+                        if (g_octave_offset < -48) g_octave_offset = -48;
+                        smc_midi_set_octave_offset(&g_midi_engine, g_octave_offset);
+                        smcpad_rgb_set(14, SMC_COLOR_WHITE);
+                        smcpad_rgb_show();
+                    } else {
+                        /* Shift + Pad 16: Octave Up (+12) */
+                        g_octave_offset += 12;
+                        if (g_octave_offset > 48) g_octave_offset = 48;
+                        smc_midi_set_octave_offset(&g_midi_engine, g_octave_offset);
+                        smcpad_rgb_set(15, SMC_COLOR_WHITE);
+                        smcpad_rgb_show();
+                    }
+                }
+                break;
+            }
+
+            /* Normal Pad Strike */
+            g_held_pads_mask |= (uint16_t)(1u << hw_ev.index);
+
+            /* Calculate velocity shaping if applicable */
+            uint8_t vel = (uint8_t)hw_ev.value;
+            if (g_config.velocity_curve == VELOCITY_CURVE_FIXED) {
+                vel = 127;
+            } else if (g_config.velocity_curve != VELOCITY_CURVE_LINEAR) {
+                vel = smc_calculate_velocity(vel, 1, 127, g_config.velocity_curve);
+            }
+            g_pad_velocities[hw_ev.index] = vel;
+
+            if (g_note_repeat_enabled) {
+                /* When note repeat is enabled, reset cycle timer so repeat engine triggers immediately */
+                if (!g_repeat_gate_active) {
+                    g_repeat_cycle_start_ms = 0;
+                }
+            } else {
+                ev.type = EVENT_PAD_STRIKE;
+                ev.index = hw_ev.index;
+                ev.value = vel;
+                smcpad_rgb_set(ev.index, smc_rgb_led_get_bank_palette(g_pad_bank)->hit_color);
+                smcpad_rgb_show();
+                smc_midi_process_event(&g_midi_engine, &g_encoder_engine, &ev);
+            }
             break;
 
         case 2: /* SMCPAD_EV_PAD_OFF (Pad Release) */
             g_held_pads_mask &= (uint16_t)~(1u << hw_ev.index);
+
+            if (g_note_repeat_cfg_mode) {
+                break;
+            }
+
             if (g_midi_engine.shift_active) {
                 const smc_bank_palette_t *p_pal = smc_rgb_led_get_bank_palette(g_pad_bank);
                 smcpad_rgb_set(hw_ev.index, p_pal->idle_color);
@@ -271,15 +420,42 @@ void loop(void) {
                 break;
             }
 
-            ev.type = EVENT_PAD_RELEASE;
-            ev.index = hw_ev.index;
-            ev.value = 0;
-            smcpad_rgb_set(ev.index, smc_rgb_led_get_bank_palette(g_pad_bank)->idle_color);
-            smcpad_rgb_show();
-            smc_midi_process_event(&g_midi_engine, &g_encoder_engine, &ev);
+            if (g_note_repeat_enabled) {
+                /* In Note Repeat mode: if this pad was sounding, turn it off immediately */
+                ev.type = EVENT_PAD_RELEASE;
+                ev.index = hw_ev.index;
+                ev.value = 0;
+                smc_midi_process_event(&g_midi_engine, &g_encoder_engine, &ev);
+                smcpad_rgb_set(ev.index, smc_rgb_led_get_bank_palette(g_pad_bank)->idle_color);
+                smcpad_rgb_show();
+
+                if (g_held_pads_mask == 0) {
+                    g_repeat_gate_active = false;
+                    g_repeat_cycle_start_ms = 0;
+                }
+            } else {
+                ev.type = EVENT_PAD_RELEASE;
+                ev.index = hw_ev.index;
+                ev.value = 0;
+                smcpad_rgb_set(ev.index, smc_rgb_led_get_bank_palette(g_pad_bank)->idle_color);
+                smcpad_rgb_show();
+                smc_midi_process_event(&g_midi_engine, &g_encoder_engine, &ev);
+            }
             break;
 
         case 5: /* SMCPAD_EV_ENCODER */
+            /* If Note Repeat button is held, Knob 1 (index 0) adjusts rate division */
+            if (g_note_repeat_btn_held && hw_ev.index == 0) {
+                int new_rate = (int)g_repeat_rate_idx + hw_ev.value;
+                if (new_rate < 0) new_rate = 0;
+                if (new_rate > 7) new_rate = 7;
+                g_repeat_rate_idx = (uint8_t)new_rate;
+                if (g_note_repeat_cfg_mode) {
+                    refresh_repeat_cfg_leds();
+                }
+                break;
+            }
+
             ev.type = EVENT_ENCODER_DELTA;
             ev.index = hw_ev.index;
             ev.value = hw_ev.value;
@@ -297,17 +473,39 @@ void loop(void) {
             if (hw_ev.index == 8) { /* Shift (Btn 8) */
                 g_midi_engine.shift_active = true;
                 smcpad_led_set(8, 1);
+            } else if (hw_ev.index == 9) { /* Note Repeat (Btn 9) */
+                g_note_repeat_btn_held = true;
+                if (g_midi_engine.shift_active) {
+                    /* Shift + Note Repeat = Toggle Repeat Config Mode */
+                    g_note_repeat_cfg_mode = !g_note_repeat_cfg_mode;
+                    if (g_note_repeat_cfg_mode) {
+                        refresh_repeat_cfg_leds();
+                    } else {
+                        restore_bank_leds();
+                    }
+                } else {
+                    /* Normal Note Repeat Toggle */
+                    g_note_repeat_enabled = !g_note_repeat_enabled;
+                    smcpad_led_set(9, g_note_repeat_enabled);
+                    if (!g_note_repeat_enabled && g_repeat_gate_active) {
+                        for (uint8_t p = 0; p < SMC_NUM_PADS; p++) {
+                            if (g_held_pads_mask & (1u << p)) {
+                                smc_event_t ev_off = { .type = EVENT_PAD_RELEASE, .index = p, .value = 0 };
+                                smc_midi_process_event(&g_midi_engine, &g_encoder_engine, &ev_off);
+                                smcpad_rgb_set(p, smc_rgb_led_get_bank_palette(g_pad_bank)->idle_color);
+                            }
+                        }
+                        smcpad_rgb_show();
+                        g_repeat_gate_active = false;
+                    }
+                }
             } else if (hw_ev.index == 6 && g_midi_engine.shift_active) { /* Shift + Pause (Btn 6) = Panic */
                 smc_midi_panic(&g_midi_engine);
-                const smc_bank_palette_t *p_pal = smc_rgb_led_get_bank_palette(g_pad_bank);
-                for (int p = 0; p < SMC_NUM_PADS; p++) smcpad_rgb_set(p, p_pal->idle_color);
-                smcpad_rgb_show();
+                restore_bank_leds();
             } else if (hw_ev.index == 1) { /* Pad Bank (Btn 1) */
                 g_pad_bank = (g_pad_bank + 1) & 3;
                 smc_config_set_pad_bank(g_pad_bank);
-                const smc_bank_palette_t *p_pal = smc_rgb_led_get_bank_palette(g_pad_bank);
-                for (int p = 0; p < SMC_NUM_PADS; p++) smcpad_rgb_set(p, p_pal->idle_color);
-                smcpad_rgb_show();
+                restore_bank_leds();
                 smcpad_led_set(1, (g_pad_bank > 0));
             } else if (hw_ev.index == 2) { /* Knob Bank (Btn 2) */
                 g_encoder_bank = (g_encoder_bank + 1) & 3;
@@ -316,7 +514,7 @@ void loop(void) {
             } else if (hw_ev.index == 3) { /* Left Arrow (Btn 3) */
                 smcpad_led_set(3, 1);
                 if (g_midi_engine.shift_active) {
-                    /* Shift + Left: Decrement MIDI channel (1..16) */
+                    /* Shift + Left: Decrement MIDI channel (0..15) */
                     g_channel_offset = (g_channel_offset <= 0) ? 15 : g_channel_offset - 1;
                     smc_midi_set_channel_override(&g_midi_engine, g_channel_offset);
                 } else {
@@ -328,7 +526,7 @@ void loop(void) {
             } else if (hw_ev.index == 4) { /* Right Arrow (Btn 4) */
                 smcpad_led_set(4, 1);
                 if (g_midi_engine.shift_active) {
-                    /* Shift + Right: Increment MIDI channel (1..16) */
+                    /* Shift + Right: Increment MIDI channel (0..15) */
                     g_channel_offset = (g_channel_offset < 0) ? 1 : (g_channel_offset + 1) & 15;
                     smc_midi_set_channel_override(&g_midi_engine, g_channel_offset);
                 } else {
@@ -337,9 +535,6 @@ void loop(void) {
                     if (g_octave_offset > 48) g_octave_offset = 48;
                     smc_midi_set_octave_offset(&g_midi_engine, g_octave_offset);
                 }
-            } else if (hw_ev.index == 9) { /* Note Repeat (Btn 9) */
-                g_note_repeat_enabled = !g_note_repeat_enabled;
-                smcpad_led_set(9, g_note_repeat_enabled);
             }
             break;
 
@@ -347,6 +542,12 @@ void loop(void) {
             if (hw_ev.index == 8) {
                 g_midi_engine.shift_active = false;
                 smcpad_led_set(8, 0);
+                if (g_note_repeat_cfg_mode) {
+                    g_note_repeat_cfg_mode = false;
+                    restore_bank_leds();
+                }
+            } else if (hw_ev.index == 9) {
+                g_note_repeat_btn_held = false;
             } else if (hw_ev.index == 3) {
                 smcpad_led_set(3, 0);
             } else if (hw_ev.index == 4) {

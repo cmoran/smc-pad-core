@@ -19,7 +19,12 @@ void smc_midi_init(smc_midi_dispatcher_t *dispatcher,
     dispatcher->active_pads_mask = 0;
     dispatcher->shift_active = false;
     dispatcher->octave_offset = 0;
+    dispatcher->semitone_offset = 0;
     dispatcher->channel_override = -1;
+
+    /* Initialize sounding notes to 0xFF (no note currently sounding) */
+    memset(dispatcher->sounding_notes, 0xFF, sizeof(dispatcher->sounding_notes));
+    memset(dispatcher->sounding_channels, 0, sizeof(dispatcher->sounding_channels));
 
     /* Default GM drum layout for Bank 0 fallback */
     for (uint8_t i = 0; i < SMC_NUM_PADS; i++) {
@@ -60,6 +65,17 @@ void smc_midi_set_octave_offset(smc_midi_dispatcher_t *dispatcher, int8_t semito
 
 int8_t smc_midi_get_octave_offset(const smc_midi_dispatcher_t *dispatcher) {
     return dispatcher ? dispatcher->octave_offset : 0;
+}
+
+void smc_midi_set_semitone_offset(smc_midi_dispatcher_t *dispatcher, int8_t semitones) {
+    if (!dispatcher) return;
+    if (semitones < -12) semitones = -12;
+    if (semitones > 12) semitones = 12;
+    dispatcher->semitone_offset = semitones;
+}
+
+int8_t smc_midi_get_semitone_offset(const smc_midi_dispatcher_t *dispatcher) {
+    return dispatcher ? dispatcher->semitone_offset : 0;
 }
 
 void smc_midi_set_channel_override(smc_midi_dispatcher_t *dispatcher, int8_t channel) {
@@ -119,8 +135,8 @@ void smc_midi_process_event(smc_midi_dispatcher_t *dispatcher,
 
                 uint8_t vel = (uint8_t)event->value;
 
-                /* Apply octave transposition */
-                int16_t transposed = (int16_t)note + dispatcher->octave_offset;
+                /* Apply octave and semitone transposition */
+                int16_t transposed = (int16_t)note + dispatcher->octave_offset + dispatcher->semitone_offset;
                 if (transposed < 0) transposed = 0;
                 if (transposed > 127) transposed = 127;
                 note = (uint8_t)transposed;
@@ -129,6 +145,10 @@ void smc_midi_process_event(smc_midi_dispatcher_t *dispatcher,
                 if (dispatcher->channel_override >= 0) {
                     ch = (uint8_t)(dispatcher->channel_override & 0x0Fu);
                 }
+
+                /* Record sounding note and channel to guarantee matching Note-Off */
+                dispatcher->sounding_notes[pad_idx] = note;
+                dispatcher->sounding_channels[pad_idx] = ch;
 
                 /* Emit Note-On */
                 emit_midi_3byte(dispatcher, (uint8_t)(0x90u | ch), note, vel);
@@ -142,27 +162,34 @@ void smc_midi_process_event(smc_midi_dispatcher_t *dispatcher,
             if (event->index < SMC_NUM_PADS) {
                 uint8_t pad_idx = event->index;
                 uint8_t ch = 0;
-                uint8_t note = 36 + pad_idx;
+                uint8_t note = 0;
 
-                if (dispatcher->config) {
-                    const smc_pad_cfg_t *p_cfg = smc_config_get_active_pad(dispatcher->config, pad_idx);
-                    if (p_cfg) {
-                        ch = p_cfg->channel & 0x0Fu;
-                        note = p_cfg->note;
-                    }
+                /* If this pad had a sounding note recorded, use it directly */
+                if (dispatcher->sounding_notes[pad_idx] != 0xFF) {
+                    note = dispatcher->sounding_notes[pad_idx];
+                    ch = dispatcher->sounding_channels[pad_idx];
+                    dispatcher->sounding_notes[pad_idx] = 0xFF;
                 } else {
-                    ch = dispatcher->pad_configs[pad_idx].midi_channel & 0x0Fu;
-                    note = dispatcher->pad_configs[pad_idx].note_number;
-                }
+                    /* Fallback to current config mapping */
+                    if (dispatcher->config) {
+                        const smc_pad_cfg_t *p_cfg = smc_config_get_active_pad(dispatcher->config, pad_idx);
+                        if (p_cfg) {
+                            ch = p_cfg->channel & 0x0Fu;
+                            note = p_cfg->note;
+                        }
+                    } else {
+                        ch = dispatcher->pad_configs[pad_idx].midi_channel & 0x0Fu;
+                        note = dispatcher->pad_configs[pad_idx].note_number;
+                    }
 
-                /* Apply octave transposition */
-                int16_t transposed = (int16_t)note + dispatcher->octave_offset;
-                if (transposed < 0) transposed = 0;
-                if (transposed > 127) transposed = 127;
-                note = (uint8_t)transposed;
+                    int16_t transposed = (int16_t)note + dispatcher->octave_offset + dispatcher->semitone_offset;
+                    if (transposed < 0) transposed = 0;
+                    if (transposed > 127) transposed = 127;
+                    note = (uint8_t)transposed;
 
-                if (dispatcher->channel_override >= 0) {
-                    ch = (uint8_t)(dispatcher->channel_override & 0x0Fu);
+                    if (dispatcher->channel_override >= 0) {
+                        ch = (uint8_t)(dispatcher->channel_override & 0x0Fu);
+                    }
                 }
 
                 /* Emit Note-Off */
@@ -234,21 +261,28 @@ void smc_midi_panic(smc_midi_dispatcher_t *dispatcher) {
     for (uint8_t i = 0; i < SMC_NUM_PADS; i++) {
         if (dispatcher->active_pads_mask & (1u << i)) {
             uint8_t ch = 0;
-            uint8_t note = 36 + i;
+            uint8_t note = 0;
 
-            if (dispatcher->config) {
-                const smc_pad_cfg_t *p_cfg = smc_config_get_active_pad(dispatcher->config, i);
-                if (p_cfg) {
-                    ch = p_cfg->channel & 0x0Fu;
-                    note = p_cfg->note;
-                }
+            if (dispatcher->sounding_notes[i] != 0xFF) {
+                note = dispatcher->sounding_notes[i];
+                ch = dispatcher->sounding_channels[i];
+                dispatcher->sounding_notes[i] = 0xFF;
             } else {
-                ch = dispatcher->pad_configs[i].midi_channel & 0x0Fu;
-                note = dispatcher->pad_configs[i].note_number;
+                if (dispatcher->config) {
+                    const smc_pad_cfg_t *p_cfg = smc_config_get_active_pad(dispatcher->config, i);
+                    if (p_cfg) {
+                        ch = p_cfg->channel & 0x0Fu;
+                        note = p_cfg->note;
+                    }
+                } else {
+                    ch = dispatcher->pad_configs[i].midi_channel & 0x0Fu;
+                    note = dispatcher->pad_configs[i].note_number;
+                }
             }
 
             emit_midi_3byte(dispatcher, (uint8_t)(0x80u | ch), note, 0);
         }
+        dispatcher->sounding_notes[i] = 0xFF;
     }
 
     /* 3. Clear active mask */

@@ -126,6 +126,39 @@ int main(void) {
     smc_midi_process_event(&dispatcher, &encoder, &ev_tr);
     assert(sim_msgs[0].bytes[0] == 0x94); /* Note-On Ch 5 (0x90 | 4) */
 
+    /* 6. Test Zero Stuck Notes on Transposition Change While Pad Is Held */
+    /* Release previous note first */
+    smc_event_t ev_rel = { .type = EVENT_PAD_RELEASE, .index = 0, .value = 0, .timestamp = 650 };
+    smc_midi_process_event(&dispatcher, &encoder, &ev_rel);
+
+    /* Strike Pad 3 with octave offset +12 (default note 39 -> 51) */
+    smc_midi_set_channel_override(&dispatcher, -1);
+    smc_midi_set_octave_offset(&dispatcher, 12);
+    smc_midi_set_semitone_offset(&dispatcher, 2); /* 39 + 12 + 2 = 53 */
+    sim_msg_count = 0;
+
+    smc_event_t ev_p3_strike = { .type = EVENT_PAD_STRIKE, .index = 3, .value = 100, .timestamp = 700 };
+    smc_midi_process_event(&dispatcher, &encoder, &ev_p3_strike);
+    assert(sim_msg_count == 1);
+    assert(sim_msgs[0].bytes[0] == 0x90);
+    assert(sim_msgs[0].bytes[1] == 53); /* Sounding note is 53 */
+    assert(smc_midi_is_pad_active(&dispatcher, 3));
+
+    /* While pad 3 is still held, transpose octave to -24 and semitone to -5! */
+    smc_midi_set_octave_offset(&dispatcher, -24);
+    smc_midi_set_semitone_offset(&dispatcher, -5);
+
+    /* Now release Pad 3 */
+    sim_msg_count = 0;
+    smc_event_t ev_p3_release = { .type = EVENT_PAD_RELEASE, .index = 3, .value = 0, .timestamp = 750 };
+    smc_midi_process_event(&dispatcher, &encoder, &ev_p3_release);
+
+    /* The emitted Note-Off MUST be Note 53, NOT (39 - 24 - 5 = 10)! */
+    assert(sim_msg_count == 1);
+    assert(sim_msgs[0].bytes[0] == 0x80);
+    assert(sim_msgs[0].bytes[1] == 53); /* Exactly matches sounding note! Zero stuck notes! */
+    assert(!smc_midi_is_pad_active(&dispatcher, 3));
+
     printf("MIDI Dispatcher unit tests passed successfully!\n");
     return 0;
 }
