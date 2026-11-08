@@ -1,0 +1,603 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SMC-Pad Open Firmware — WebMIDI Configurator</title>
+  <style>
+    :root {
+      --bg-base: #0f111a;
+      --bg-panel: #181b28;
+      --bg-subtle: #222638;
+      --accent: #00d2ff;
+      --accent-glow: rgba(0, 210, 255, 0.4);
+      --success: #00e676;
+      --warning: #ffb300;
+      --danger: #ff5252;
+      --text-main: #f0f4fc;
+      --text-muted: #8b9bb4;
+      --border: #2e344d;
+      --pad-idle: #1b2838;
+      --pad-hit: #00e676;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+    body { background-color: var(--bg-base); color: var(--text-main); min-height: 100vh; padding: 24px; display: flex; flex-direction: column; gap: 20px; }
+    
+    header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      background: var(--bg-panel);
+      padding: 16px 24px;
+      border-radius: 12px;
+      border: 1px solid var(--border);
+    }
+    .brand h1 { font-size: 1.3rem; font-weight: 700; color: #fff; display: flex; align-items: center; gap: 10px; }
+    .brand p { font-size: 0.85rem; color: var(--text-muted); }
+    .status-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 14px;
+      border-radius: 20px;
+      font-size: 0.85rem;
+      font-weight: 600;
+      background: #2a1b1b;
+      color: var(--danger);
+      border: 1px solid rgba(255, 82, 82, 0.3);
+    }
+    .status-badge.connected {
+      background: #12281e;
+      color: var(--success);
+      border-color: rgba(0, 230, 118, 0.3);
+    }
+    .status-dot { width: 8px; height: 8px; border-radius: 50%; background: currentColor; }
+
+    button {
+      background: var(--accent);
+      color: #05141e;
+      border: none;
+      padding: 8px 18px;
+      font-weight: 700;
+      font-size: 0.85rem;
+      border-radius: 6px;
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+    button:hover { filter: brightness(1.15); box-shadow: 0 0 12px var(--accent-glow); }
+    button.btn-sec { background: var(--bg-subtle); color: var(--text-main); border: 1px solid var(--border); }
+    button.btn-sec:hover { background: #2f354e; }
+    button.btn-danger { background: #3d1c1c; color: var(--danger); border: 1px solid rgba(255,82,82,0.4); }
+    button.btn-danger:hover { background: var(--danger); color: #fff; }
+
+    .main-grid {
+      display: grid;
+      grid-template-columns: 1fr 340px;
+      gap: 20px;
+    }
+
+    .card {
+      background: var(--bg-panel);
+      border-radius: 12px;
+      border: 1px solid var(--border);
+      padding: 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+    .card-title {
+      font-size: 1rem;
+      font-weight: 600;
+      color: #fff;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      border-bottom: 1px solid var(--border);
+      padding-bottom: 12px;
+    }
+
+    .bank-tabs { display: flex; gap: 8px; }
+    .bank-tab {
+      padding: 6px 14px;
+      border-radius: 6px;
+      background: var(--bg-subtle);
+      border: 1px solid var(--border);
+      color: var(--text-muted);
+      cursor: pointer;
+      font-weight: 600;
+      font-size: 0.85rem;
+    }
+    .bank-tab.active {
+      background: var(--accent);
+      color: #05141e;
+      border-color: var(--accent);
+    }
+
+    /* 4x4 Pad Matrix */
+    .pads-matrix {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 12px;
+      aspect-ratio: 1;
+      max-width: 520px;
+      margin: 0 auto;
+      width: 100%;
+    }
+    .pad {
+      background: var(--pad-idle);
+      border: 2px solid #2e4158;
+      border-radius: 8px;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      padding: 10px;
+      cursor: pointer;
+      position: relative;
+      user-select: none;
+      transition: all 0.1s ease;
+    }
+    .pad:hover { border-color: var(--accent); }
+    .pad.selected { border-color: #fff; box-shadow: 0 0 10px rgba(255,255,255,0.4); }
+    .pad.hit { background: var(--pad-hit) !important; transform: scale(0.97); }
+    .pad-idx { font-size: 0.75rem; font-weight: 700; color: var(--text-muted); }
+    .pad-note { font-size: 1.15rem; font-weight: 800; color: #fff; text-align: center; margin: auto 0; }
+    .pad-info { font-size: 0.7rem; color: var(--text-muted); display: flex; justify-content: space-between; }
+
+    /* Knobs Grid */
+    .knobs-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 12px;
+    }
+    .knob-card {
+      background: var(--bg-subtle);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 10px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 6px;
+    }
+    .knob-dial {
+      width: 50px;
+      height: 50px;
+      border-radius: 50%;
+      background: #181d2c;
+      border: 2px solid #3d4a6a;
+      position: relative;
+    }
+    .knob-indicator {
+      width: 3px;
+      height: 18px;
+      background: var(--accent);
+      position: absolute;
+      top: 4px;
+      left: calc(50% - 1.5px);
+      transform-origin: bottom center;
+      transform: rotate(0deg);
+    }
+    .knob-val { font-size: 0.85rem; font-weight: 700; color: #fff; }
+    .knob-lbl { font-size: 0.75rem; color: var(--text-muted); }
+
+    /* Form Fields */
+    .field-group { display: flex; flex-direction: column; gap: 6px; margin-bottom: 12px; }
+    .field-group label { font-size: 0.8rem; font-weight: 600; color: var(--text-muted); }
+    .field-group input, .field-group select {
+      background: var(--bg-subtle);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 8px 10px;
+      color: #fff;
+      font-size: 0.85rem;
+    }
+
+    .log-box {
+      background: #090a0f;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      height: 180px;
+      overflow-y: auto;
+      font-family: monospace;
+      font-size: 0.75rem;
+      padding: 10px;
+      color: #a0aec0;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+    .log-line.tx { color: #00d2ff; }
+    .log-line.rx { color: #00e676; }
+    .log-line.err { color: #ff5252; }
+
+    .action-bar { display: flex; gap: 10px; flex-wrap: wrap; }
+  </style>
+</head>
+<body>
+
+  <header>
+    <div class="brand">
+      <h1>SMC-Pad Open Firmware Configurator</h1>
+      <p>Universal WebMIDI SysEx (Protocol ID 0x7D)</p>
+    </div>
+    <div style="display:flex; align-items:center; gap: 16px;">
+      <div id="statusBadge" class="status-badge">
+        <div class="status-dot"></div>
+        <span id="statusText">Disconnected</span>
+      </div>
+      <button id="btnConnect" onclick="connectMIDI()">Connect SMC-Pad</button>
+    </div>
+  </header>
+
+  <div class="main-grid">
+    <!-- Left Column: Matrix & Knobs -->
+    <div style="display: flex; flex-direction: column; gap: 20px;">
+      
+      <!-- Virtual Banks & Pad Matrix -->
+      <div class="card">
+        <div class="card-title">
+          <span>16-Pad Matrix Mapping</span>
+          <div class="bank-tabs">
+            <div class="bank-tab active" onclick="switchBank(0)">Bank 0 (A)</div>
+            <div class="bank-tab" onclick="switchBank(1)">Bank 1 (B)</div>
+            <div class="bank-tab" onclick="switchBank(2)">Bank 2</div>
+            <div class="bank-tab" onclick="switchBank(3)">Bank 3</div>
+          </div>
+        </div>
+        <div class="pads-matrix" id="padGrid"></div>
+      </div>
+
+      <!-- 8 Rotary Encoders -->
+      <div class="card">
+        <div class="card-title">
+          <span>8 Rotary Encoders (CC Mapping)</span>
+          <button class="btn-sec" onclick="queryAllEncoders()">Read Encoders</button>
+        </div>
+        <div class="knobs-grid" id="knobGrid"></div>
+      </div>
+
+    </div>
+
+    <!-- Right Column: Inspector & Actions -->
+    <div style="display: flex; flex-direction: column; gap: 20px;">
+      
+      <!-- Pad Inspector -->
+      <div class="card">
+        <div class="card-title">
+          <span id="inspectorTitle">Pad Inspector</span>
+          <button class="btn-sec" style="padding:4px 8px;" onclick="uploadSelectedPad()">Apply</button>
+        </div>
+        <div class="field-group">
+          <label>MIDI Note Number (0..127)</label>
+          <input type="number" id="inpNote" min="0" max="127" value="36" onchange="updateNoteFromInput()">
+        </div>
+        <div class="field-group">
+          <label>MIDI Channel (1..16)</label>
+          <input type="number" id="inpChannel" min="1" max="16" value="1">
+        </div>
+        <div class="field-group">
+          <label>Pad Trigger Mode</label>
+          <select id="inpMode">
+            <option value="0">Momentary (Note Strike)</option>
+            <option value="1">Toggle (Latch On/Off)</option>
+          </select>
+        </div>
+      </div>
+
+      <!-- Calibration & Velocity -->
+      <div class="card">
+        <div class="card-title">
+          <span>Velocity & Calibration</span>
+          <button class="btn-sec" style="padding:4px 8px;" onclick="uploadCalibration()">Apply</button>
+        </div>
+        <div class="field-group">
+          <label>Velocity Curve</label>
+          <select id="inpCurve">
+            <option value="0">Linear</option>
+            <option value="1">Soft (Sensitive)</option>
+            <option value="2">Hard (Dynamic)</option>
+            <option value="3">Fixed (Full 127)</option>
+          </select>
+        </div>
+        <div class="field-group">
+          <label>Strike Threshold (Sensitivity)</label>
+          <input type="range" id="inpThreshold" min="20" max="250" value="80" oninput="document.getElementById('lblThreshold').innerText = this.value">
+          <span id="lblThreshold" style="font-size:0.75rem; color:var(--text-muted); text-align:right;">80</span>
+        </div>
+      </div>
+
+      <!-- Device Actions -->
+      <div class="card">
+        <div class="card-title">
+          <span>Flash Persistence</span>
+        </div>
+        <div class="action-bar">
+          <button onclick="saveToFlash()" style="flex:1;">Save to Flash</button>
+          <button class="btn-danger" onclick="factoryReset()">Factory Reset</button>
+        </div>
+      </div>
+
+      <!-- SysEx Monitor -->
+      <div class="card" style="flex:1;">
+        <div class="card-title">
+          <span>SysEx Monitor</span>
+          <button class="btn-sec" style="padding:2px 8px; font-size:0.7rem;" onclick="clearLog()">Clear</button>
+        </div>
+        <div class="log-box" id="sysExLog"></div>
+      </div>
+
+    </div>
+  </div>
+
+  <script>
+    const NOTE_NAMES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
+    function getNoteLabel(noteNum) {
+      const octave = Math.floor(noteNum / 12) - 1;
+      return NOTE_NAMES[noteNum % 12] + octave;
+    }
+
+    let midiAccess = null;
+    let midiIn = null;
+    let midiOut = null;
+    let activeBank = 0;
+    let selectedPad = 0;
+
+    // Local configuration cache
+    const config = {
+      banks: Array(4).fill(0).map((_, b) => ({
+        pads: Array(16).fill(0).map((_, p) => ({ note: 36 + (b * 16) + p, channel: 0, mode: 0 })),
+        encoders: Array(8).fill(0).map((_, e) => ({ cc: 16 + e, channel: 0, step: 1, min: 0, max: 127, value: 0 }))
+      })),
+      curve: 0,
+      threshold: 80
+    };
+
+    function logMsg(type, text) {
+      const box = document.getElementById("sysExLog");
+      const line = document.createElement("div");
+      line.className = `log-line ${type}`;
+      line.innerText = `[${new Date().toLocaleTimeString()}] ${type.toUpperCase()}: ${text}`;
+      box.appendChild(line);
+      box.scrollTop = box.scrollHeight;
+    }
+    function clearLog() { document.getElementById("sysExLog").innerHTML = ""; }
+
+    async function connectMIDI() {
+      if (!navigator.requestMIDIAccess) {
+        alert("WebMIDI is not supported in this browser. Please open in Google Chrome, Chromium, Brave, or Edge.");
+        return;
+      }
+      try {
+        midiAccess = await navigator.requestMIDIAccess({ sysex: true });
+        let foundIn = null;
+        let foundOut = null;
+
+        for (const input of midiAccess.inputs.values()) {
+          if (input.name.toLowerCase().includes("smc-pad") || input.name.toLowerCase().includes("smcpad")) {
+            foundIn = input;
+            break;
+          }
+        }
+        for (const output of midiAccess.outputs.values()) {
+          if (output.name.toLowerCase().includes("smc-pad") || output.name.toLowerCase().includes("smcpad")) {
+            foundOut = output;
+            break;
+          }
+        }
+
+        // Fallback to first available if name not explicitly matched
+        if (!foundIn && midiAccess.inputs.size > 0) foundIn = midiAccess.inputs.values().next().value;
+        if (!foundOut && midiAccess.outputs.size > 0) foundOut = midiAccess.outputs.values().next().value;
+
+        if (foundIn && foundOut) {
+          midiIn = foundIn;
+          midiOut = foundOut;
+          midiIn.onmidimessage = handleMIDIMessage;
+
+          document.getElementById("statusBadge").className = "status-badge connected";
+          document.getElementById("statusText").innerText = `Connected: ${midiIn.name}`;
+          document.getElementById("btnConnect").innerText = "Reconnect";
+          logMsg("rx", `Paired with ${midiIn.name}`);
+
+          // Query Device Info
+          sendSysEx([0xF0, 0x7D, 0x01, 0x01, 0xF7]);
+        } else {
+          alert("No MIDI devices detected. Make sure your SMC-Pad is plugged in via USB.");
+        }
+      } catch (err) {
+        logMsg("err", "Failed to access WebMIDI: " + err.message);
+        alert("Permission denied or SysEx disabled. Make sure to allow MIDI/SysEx permissions.");
+      }
+    }
+
+    function sendSysEx(bytes) {
+      if (!midiOut) {
+        logMsg("err", "Cannot send: SMC-Pad not connected");
+        return;
+      }
+      midiOut.send(bytes);
+      const hex = bytes.map(b => b.toString(16).padStart(2, "0").toUpperCase()).join(" ");
+      logMsg("tx", hex);
+    }
+
+    function handleMIDIMessage(e) {
+      const data = e.data;
+      if (data[0] === 0xF0) {
+        // SysEx packet
+        const hex = Array.from(data).map(b => b.toString(16).padStart(2, "0").toUpperCase()).join(" ");
+        logMsg("rx", hex);
+
+        if (data[1] === 0x7D && data[2] === 0x01) {
+          const cmd = data[3];
+          if (cmd === 0x02) {
+            // Device Info Response
+            logMsg("rx", `Device ACK: Firmware v${data[4]}.${data[5]}.${data[6]}`);
+          } else if (cmd === 0x12) {
+            // Pad Map Response
+            const b = data[4], p = data[5], note = data[6], ch = data[7], mode = data[8];
+            if (b < 4 && p < 16) {
+              config.banks[b].pads[p] = { note, channel: ch, mode };
+              if (b === activeBank) renderPads();
+            }
+          } else if (cmd === 0x7E) {
+            logMsg("rx", `Command ACK: Status ${data[5] === 0 ? "OK" : "Error " + data[5]}`);
+          }
+        }
+      } else {
+        // Real-time MIDI events (Note-On / Note-Off / CC)
+        const status = data[0] & 0xF0;
+        const note = data[1];
+        const vel = data[2];
+
+        if (status === 0x90 && vel > 0) {
+          // Strike pad feedback
+          const pIdx = config.banks[activeBank].pads.findIndex(p => p.note === note);
+          if (pIdx !== -1) {
+            const el = document.getElementById(`pad-${pIdx}`);
+            if (el) {
+              el.classList.add("hit");
+              setTimeout(() => el.classList.remove("hit"), 150);
+            }
+          }
+        } else if (status === 0xB0) {
+          // CC turn feedback
+          const cc = data[1];
+          const val = data[2];
+          const eIdx = config.banks[activeBank].encoders.findIndex(e => e.cc === cc);
+          if (eIdx !== -1) {
+            config.banks[activeBank].encoders[eIdx].value = val;
+            updateKnobVisual(eIdx, val);
+          }
+        }
+      }
+    }
+
+    function renderPads() {
+      const grid = document.getElementById("padGrid");
+      grid.innerHTML = "";
+      for (let p = 0; p < 16; p++) {
+        const padData = config.banks[activeBank].pads[p];
+        const padEl = document.createElement("div");
+        padEl.className = `pad ${p === selectedPad ? "selected" : ""}`;
+        padEl.id = `pad-${p}`;
+        padEl.onclick = () => selectPad(p);
+        padEl.innerHTML = `
+          <div class="pad-idx">PAD ${p + 1}</div>
+          <div class="pad-note">${getNoteLabel(padData.note)}</div>
+          <div class="pad-info">
+            <span>#${padData.note}</span>
+            <span>CH ${padData.channel + 1}</span>
+          </div>
+        `;
+        grid.appendChild(padEl);
+      }
+    }
+
+    function renderKnobs() {
+      const grid = document.getElementById("knobGrid");
+      grid.innerHTML = "";
+      for (let e = 0; e < 8; e++) {
+        const enc = config.banks[activeBank].encoders[e];
+        const knob = document.createElement("div");
+        knob.className = "knob-card";
+        knob.innerHTML = `
+          <div class="knob-lbl">KNOB ${e + 1}</div>
+          <div class="knob-dial">
+            <div class="knob-indicator" id="knob-ind-${e}"></div>
+          </div>
+          <div class="knob-val" id="knob-val-${e}">${enc.value}</div>
+          <div class="knob-lbl">CC ${enc.cc}</div>
+        `;
+        grid.appendChild(knob);
+        updateKnobVisual(e, enc.value);
+      }
+    }
+
+    function updateKnobVisual(eIdx, val) {
+      const ind = document.getElementById(`knob-ind-${eIdx}`);
+      const txt = document.getElementById(`knob-val-${eIdx}`);
+      if (ind) {
+        const deg = -135 + (val / 127) * 270;
+        ind.style.transform = `rotate(${deg}deg)`;
+      }
+      if (txt) txt.innerText = val;
+    }
+
+    function selectPad(p) {
+      selectedPad = p;
+      renderPads();
+      const padData = config.banks[activeBank].pads[p];
+      document.getElementById("inspectorTitle").innerText = `Pad ${p + 1} (Bank ${activeBank})`;
+      document.getElementById("inpNote").value = padData.note;
+      document.getElementById("inpChannel").value = padData.channel + 1;
+      document.getElementById("inpMode").value = padData.mode;
+    }
+
+    function switchBank(b) {
+      activeBank = b;
+      document.querySelectorAll(".bank-tab").forEach((el, idx) => {
+        el.className = `bank-tab ${idx === b ? "active" : ""}`;
+      });
+      renderPads();
+      renderKnobs();
+      selectPad(selectedPad);
+    }
+
+    function updateNoteFromInput() {
+      const val = parseInt(document.getElementById("inpNote").value, 10);
+      if (!isNaN(val) && val >= 0 && val <= 127) {
+        config.banks[activeBank].pads[selectedPad].note = val;
+        renderPads();
+      }
+    }
+
+    function uploadSelectedPad() {
+      const note = parseInt(document.getElementById("inpNote").value, 10);
+      const ch = parseInt(document.getElementById("inpChannel").value, 10) - 1;
+      const mode = parseInt(document.getElementById("inpMode").value, 10);
+
+      config.banks[activeBank].pads[selectedPad] = { note, channel: ch, mode };
+      renderPads();
+
+      // Send SET_PAD_MAP: 0xF0 0x7D 0x01 0x11 <bank> <pad> <note> <ch> <mode> 0xF7
+      sendSysEx([0xF0, 0x7D, 0x01, 0x11, activeBank, selectedPad, note, ch, mode, 0xF7]);
+    }
+
+    function uploadCalibration() {
+      const curve = parseInt(document.getElementById("inpCurve").value, 10);
+      const thresh = parseInt(document.getElementById("inpThreshold").value, 10);
+      // SET_CALIBRATION: 0xF0 0x7D 0x01 0x21 <st_lsb> <st_msb> <rt_lsb> <rt_msb> <dr_lsb> <dr_msb> <win> <curve> 0xF7
+      sendSysEx([
+        0xF0, 0x7D, 0x01, 0x21,
+        thresh & 0x7F, (thresh >> 7) & 0x7F,
+        (thresh / 2) & 0x7F, ((thresh / 2) >> 7) & 0x7F,
+        0x70, 0x07, // Dynamic range 950
+        0x04, curve, 0xF7
+      ]);
+    }
+
+    function queryAllEncoders() {
+      for (let e = 0; e < 8; e++) {
+        sendSysEx([0xF0, 0x7D, 0x01, 0x14, activeBank, e, 0xF7]);
+      }
+    }
+
+    function saveToFlash() {
+      // 0x70 = SAVE_TO_FLASH
+      sendSysEx([0xF0, 0x7D, 0x01, 0x70, 0xF7]);
+    }
+
+    function factoryReset() {
+      if (confirm("Are you sure you want to restore factory default configuration?")) {
+        sendSysEx([0xF0, 0x7D, 0x01, 0x7F, 0xF7]);
+      }
+    }
+
+    // Initial render
+    renderPads();
+    renderKnobs();
+    selectPad(0);
+  </script>
+</body>
+</html>
