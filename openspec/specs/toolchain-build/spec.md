@@ -18,11 +18,11 @@ The repository SHALL provide a `docker/Dockerfile` and execution instructions al
 - **THEN** the target firmware `app.bin` is built inside the container and placed in the project `build/` directory
 
 ### Requirement: Target compilation and packaging
-The build system SHALL provide Makefile target rules to compile all core modules with `pi32v2-elf-gcc` targeting JieLi AC6966C, linked at entry point `0x1E08120`.
+The build system SHALL provide Makefile target rules to compile all core modules with `pi32v2-elf-gcc` targeting JieLi AC6966C, linked at entry point `0x1E08120` using self-contained BSP link assets in `bsp/` and an automatically compiled host packager `tools/smcpad_pack.c`.
 
 #### Scenario: Building flashable firmware image
 - **WHEN** `make firmware` is run with the JieLi toolchain present
-- **THEN** an ELF and packaged binary `build/app.bin` suitable for DFU flashing are generated
+- **THEN** an ELF and packaged binary `build/app.bin` suitable for DFU flashing are generated without any dependency on external reference folders.
 
 ### Requirement: Dual-method build documentation
 The repository SHALL include `docs/BUILDING.md` documenting prerequisites, native setup, Docker setup, and flashing procedures.

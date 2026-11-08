@@ -71,7 +71,7 @@ To install the non-destructive USB DFU bootloader without opening the controller
 python3 -m venv .venv
 source .venv/bin/activate
 pip install mido python-rtmidi
-python3 reference/open-smc-pad/host/install_from_stock.py
+python3 tools/stock_installer/install_from_stock.py
 ```
 * The script communicates with the stock firmware over USB-MIDI, installs the bootloader into free flash, and prompts you to power-cycle the controller once.
 * Upon reboot, the SMC-Pad will enumerate as standard USB DFU (`1209:0002`).

@@ -34,11 +34,11 @@ JL_LIB := $(JL_TC)/pi32v2/lib/r3
 JL_CFLAGS := -target pi32v2 -mcpu=r3 -integrated-as -Oz -fno-common -ffunction-sections -fdata-sections \
              -mllvm -enable-ipra=false -isystem $(JL_TC)/pi32v2/include -std=c99 -Wall -Wextra -Iinclude
 
-SMCPAD_PACK := reference/open-smc-pad/arduino/smcpad/tools/host/smcpad_pack
-SMCPAD_CORE := reference/open-smc-pad/arduino/smcpad/system/smcpad_core.o
-SMCPAD_NATIVE := reference/open-smc-pad/arduino/smcpad/system/libsmcpad_native.a
-SMCPAD_LDSCRIPT := reference/open-smc-pad/arduino/smcpad/system/sdk.ld
-SMCPAD_TEMPLATE := reference/open-smc-pad/arduino/smcpad/system/app_template.bin
+SMCPAD_PACK := $(BUILD_DIR)/smcpad_pack
+SMCPAD_CORE := bsp/smcpad_core.o
+SMCPAD_NATIVE := bsp/libsmcpad_native.a
+SMCPAD_LDSCRIPT := bsp/sdk.ld
+SMCPAD_TEMPLATE := bsp/app_template.bin
 
 TARGET_SRCS := $(HOST_SRCS) src/app_main.c
 TARGET_OBJS := $(patsubst src/%.c,$(BUILD_DIR)/target_%.o,$(TARGET_SRCS))
@@ -111,7 +111,11 @@ $(BUILD_DIR)/smcpad.elf: $(TARGET_OBJS)
 		--start-group $(SMCPAD_NATIVE) $(JL_LIB)/libc.a $(JL_LIB)/libm.a $(JL_LIB)/libcompiler-rt.a --end-group \
 		-T$(SMCPAD_LDSCRIPT) --gc-sections --sort-common --dont-complain-call-overflow
 
-$(BUILD_DIR)/app.bin: $(BUILD_DIR)/smcpad.elf
+$(BUILD_DIR)/smcpad_pack: tools/smcpad_pack.c | $(BUILD_DIR)
+	@echo "=== Compiling Host Packaging Tool ==="
+	$(CC) -O2 $< -o $@
+
+$(BUILD_DIR)/app.bin: $(BUILD_DIR)/smcpad.elf $(BUILD_DIR)/smcpad_pack
 	@echo "=== Packaging Flashable DFU Binary ==="
 	$(SMCPAD_PACK) $< $@ --template $(SMCPAD_TEMPLATE) --size
 

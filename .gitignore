@@ -16,6 +16,9 @@ build/
 *.hex
 *.d
 
+# Unignore BSP link assets
+!bsp/**
+
 # Editors & OS
 .vscode/
 .idea/
