@@ -11,6 +11,7 @@
 #include "matrix.h"
 #include "pad_adc.h"
 #include "midi_dispatcher.h"
+#include "rgb_led.h"
 
 #define MAX_CAPTURED_MIDI 64
 static smc_midi_raw_msg_t captured_midi[MAX_CAPTURED_MIDI];
@@ -84,9 +85,10 @@ int main(void) {
     smc_pad_matrix_t pad_engine;
     smc_pad_init(&pad_engine, &p_hal, 50, 25, 1000, 3, VELOCITY_CURVE_LINEAR);
 
-    /* 5. Initialize MIDI Dispatcher */
+    /* 5. Initialize MIDI Dispatcher & RGB LEDs */
     smc_midi_dispatcher_t dispatcher;
     smc_midi_init(&dispatcher, sim_send_midi);
+    smc_rgb_led_init();
 
     /* Clear sim arrays */
     for (int i = 0; i < SMC_NUM_PADS; i++) sim_pad_levels[i] = 0;
@@ -99,6 +101,18 @@ int main(void) {
     smc_pad_scan_step(&pad_engine, &queue, 102);
     smc_pad_scan_step(&pad_engine, &queue, 103); /* Strike window triggers */
 
+    /* Process Note-On event */
+    smc_event_t ev;
+    while (smc_queue_pop(&queue, &ev)) {
+        if (ev.type == EVENT_PAD_STRIKE) {
+            smc_rgb_led_set_pad(ev.index, SMC_COLOR_GREEN);
+        } else if (ev.type == EVENT_PAD_RELEASE) {
+            smc_rgb_led_set_pad(ev.index, SMC_COLOR_BLACK);
+        }
+        smc_midi_process_event(&dispatcher, &encoder, &ev);
+    }
+    assert(smc_rgb_led_get_pad(0) == SMC_COLOR_GREEN);
+
     /* Simulate rotary encoder 1 turn (Clockwise) */
     smc_encoder_process_sample(&encoder, &queue, 1, 1, 104);
     smc_encoder_process_sample(&encoder, &queue, 1, 3, 105);
@@ -108,10 +122,15 @@ int main(void) {
     smc_pad_scan_step(&pad_engine, &queue, 106);
 
     /* Consume queue in main loop and dispatch to MIDI */
-    smc_event_t ev;
     while (smc_queue_pop(&queue, &ev)) {
+        if (ev.type == EVENT_PAD_STRIKE) {
+            smc_rgb_led_set_pad(ev.index, SMC_COLOR_GREEN);
+        } else if (ev.type == EVENT_PAD_RELEASE) {
+            smc_rgb_led_set_pad(ev.index, SMC_COLOR_BLACK);
+        }
         smc_midi_process_event(&dispatcher, &encoder, &ev);
     }
+    assert(smc_rgb_led_get_pad(0) == SMC_COLOR_BLACK);
 
     /* Verify captured MIDI packets */
     assert(captured_midi_count == 3);

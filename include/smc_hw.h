@@ -44,6 +44,21 @@ extern "C" {
 #define SMC_PORTC_BASE              0x1E5080u
 
 /* ========================================================================= */
+/* SPI Hardware Registers                                                    */
+/* ========================================================================= */
+
+/* SPI1 Controller Registers (Pad RGB WS2812 single-wire DMA on PB1) */
+#define SMC_SPI1_CON                0x1E1D00u
+#define SMC_SPI1_BAUD               0x1E1D04u
+#define SMC_SPI1_BUF                0x1E1D08u
+#define SMC_SPI1_ADR                0x1E1D0Cu
+#define SMC_SPI1_CNT                0x1E1D10u
+
+/* I/O Mapping Registers */
+#define SMC_IOMAP_CON1              0x1E531Cu   /* JL_IOMAP->CON1 */
+#define SMC_IOMAP_SPI1_PORT_A_MASK  (1u << 4)   /* Bit 4: 0 = Port A (DO=PB1), 1 = Port B (DO=PC5) */
+
+/* ========================================================================= */
 /* Physical Hardware Pin Definitions                                         */
 /* ========================================================================= */
 

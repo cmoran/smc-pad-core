@@ -6,11 +6,11 @@
 #   make clean            - Clean build artifacts
 
 CC ?= gcc
-CFLAGS ?= -Wall -Wextra -Werror -std=c99 -pedantic -O2 -Iinclude
+CFLAGS ?= -Wall -Wextra -Werror -std=c99 -pedantic -O2 -Iinclude -DSMC_HOST_TEST
 BUILD_DIR ?= build
 
 # Host sources and objects
-HOST_SRCS := src/ring_buffer.c src/encoder.c src/matrix.c src/pad_adc.c src/velocity_curve.c src/midi_dispatcher.c
+HOST_SRCS := src/ring_buffer.c src/encoder.c src/matrix.c src/pad_adc.c src/velocity_curve.c src/midi_dispatcher.c src/rgb_led.c
 HOST_OBJS := $(patsubst src/%.c,$(BUILD_DIR)/host_%.o,$(HOST_SRCS))
 
 HOST_TESTS := $(BUILD_DIR)/test_ring_buffer \
@@ -18,6 +18,7 @@ HOST_TESTS := $(BUILD_DIR)/test_ring_buffer \
               $(BUILD_DIR)/test_matrix \
               $(BUILD_DIR)/test_pad_adc \
               $(BUILD_DIR)/test_midi_dispatcher \
+              $(BUILD_DIR)/test_rgb_led \
               $(BUILD_DIR)/test_e2e_pipeline
 
 # JieLi Target cross-compiler setup
@@ -57,6 +58,9 @@ $(BUILD_DIR)/test_pad_adc: test/test_pad_adc.c $(BUILD_DIR)/host_ring_buffer.o $
 $(BUILD_DIR)/test_midi_dispatcher: test/test_midi_dispatcher.c $(BUILD_DIR)/host_ring_buffer.o $(BUILD_DIR)/host_encoder.o $(BUILD_DIR)/host_midi_dispatcher.o
 	$(CC) $(CFLAGS) $^ -o $@
 
+$(BUILD_DIR)/test_rgb_led: test/test_rgb_led.c $(BUILD_DIR)/host_rgb_led.o
+	$(CC) $(CFLAGS) $^ -o $@
+
 $(BUILD_DIR)/test_e2e_pipeline: test/test_e2e_pipeline.c $(HOST_OBJS)
 	$(CC) $(CFLAGS) $^ -o $@
 
@@ -67,6 +71,7 @@ test: $(HOST_TESTS)
 	@$(BUILD_DIR)/test_matrix
 	@$(BUILD_DIR)/test_pad_adc
 	@$(BUILD_DIR)/test_midi_dispatcher
+	@$(BUILD_DIR)/test_rgb_led
 	@$(BUILD_DIR)/test_e2e_pipeline
 	@echo "=== All Host Tests Passed Successfully ==="
 
