@@ -128,6 +128,11 @@ void smc_midi_rx_feed_byte(smc_midi_dispatcher_t *dispatcher, uint8_t byte);
 void smc_midi_rx_feed_bytes(smc_midi_dispatcher_t *dispatcher, const uint8_t *data, size_t len);
 
 /**
+ * @brief Broadcast a raw 1..3 byte MIDI message to all registered transports (USB, BLE, UART).
+ */
+void smc_midi_send_raw(smc_midi_dispatcher_t *dispatcher, const smc_midi_raw_msg_t *msg);
+
+/**
  * @brief Process an incoming event from the ring buffer.
  */
 void smc_midi_process_event(smc_midi_dispatcher_t *dispatcher,

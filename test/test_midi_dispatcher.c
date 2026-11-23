@@ -35,6 +35,17 @@ static void sim_clock_cb(uint8_t msg_type, void *ctx) {
     last_clock_cmd = msg_type;
 }
 
+static uint8_t sim_rx_note = 0;
+static uint8_t sim_rx_vel = 0;
+static uint32_t sim_rx_note_count = 0;
+static void sim_host_note_cb(uint8_t ch, uint8_t note, uint8_t vel, void *ctx) {
+    (void)ch;
+    (void)ctx;
+    sim_rx_note = note;
+    sim_rx_vel = vel;
+    sim_rx_note_count++;
+}
+
 int main(void) {
     printf("Running MIDI Dispatcher unit tests...\n");
 
@@ -326,6 +337,62 @@ int main(void) {
     assert(smc_rgb_led_get_pad(5) == SMC_COLOR_SCALE_ROOT); /* Pad 5 (60 = C) is Gold */
     assert(smc_rgb_led_get_pad(6) == SMC_COLOR_SCALE_DIM);  /* Pad 6 (49 = C#) is Dim */
     assert(smc_rgb_led_get_pad(7) == SMC_COLOR_SCALE_DIM);  /* Pad 7 (51 = D#) is Dim */
+
+    /* 15. Test Per-Pad Polyphonic Pressure Mode (even while sounding & global mode == 0) */
+    cfg.scale.enabled = false;
+    cfg.pads[0][1].note = 40;
+    cfg.pads[0][1].pressure_mode = 1;
+    smc_midi_set_pressure_mode(&dispatcher, 0);
+
+    smc_event_t ev_p1_on = { .type = EVENT_PAD_STRIKE, .index = 1, .value = 100, .timestamp = 1300 };
+    smc_midi_process_event(&dispatcher, &encoder, &ev_p1_on);
+    sim_msg_count = 0;
+    smc_event_t ev_p1_press = { .type = EVENT_PAD_PRESSURE, .index = 1, .value = 77, .timestamp = 1320 };
+    smc_midi_process_event(&dispatcher, &encoder, &ev_p1_press);
+    assert(sim_msg_count == 1);
+    assert(sim_msgs[0].bytes[0] == 0xA0); /* Poly Key Pressure honored from per-pad config */
+    assert(sim_msgs[0].bytes[1] == 40);
+    assert(sim_msgs[0].bytes[2] == 77);
+    smc_event_t ev_p1_off = { .type = EVENT_PAD_RELEASE, .index = 1, .value = 0, .timestamp = 1340 };
+    smc_midi_process_event(&dispatcher, &encoder, &ev_p1_off);
+
+    /* 16. Test Pad Toggle Mode (mode == 1) */
+    cfg.pads[0][2].note = 44;
+    cfg.pads[0][2].mode = 1; /* Toggle */
+    sim_msg_count = 0;
+    smc_event_t ev_tog_on1 = { .type = EVENT_PAD_STRIKE, .index = 2, .value = 100, .timestamp = 1400 };
+    smc_midi_process_event(&dispatcher, &encoder, &ev_tog_on1);
+    assert(sim_msg_count == 1 && sim_msgs[0].bytes[0] == 0x90 && sim_msgs[0].bytes[1] == 44);
+    assert(smc_midi_is_pad_active(&dispatcher, 2));
+
+    /* Physical release must NOT stop toggled note */
+    sim_msg_count = 0;
+    smc_event_t ev_tog_rel1 = { .type = EVENT_PAD_RELEASE, .index = 2, .value = 0, .timestamp = 1410 };
+    smc_midi_process_event(&dispatcher, &encoder, &ev_tog_rel1);
+    assert(sim_msg_count == 0);
+    assert(smc_midi_is_pad_active(&dispatcher, 2));
+
+    /* Second strike toggles note OFF */
+    sim_msg_count = 0;
+    smc_event_t ev_tog_on2 = { .type = EVENT_PAD_STRIKE, .index = 2, .value = 90, .timestamp = 1450 };
+    smc_midi_process_event(&dispatcher, &encoder, &ev_tog_on2);
+    assert(sim_msg_count == 1 && sim_msgs[0].bytes[0] == 0x80 && sim_msgs[0].bytes[1] == 44);
+    assert(!smc_midi_is_pad_active(&dispatcher, 2));
+
+    /* 17. Test MIDI RX: Note-On aborting SysEx & System Common clearing running status */
+    smc_midi_set_host_callbacks(&dispatcher, sim_host_note_cb, NULL, NULL);
+    sim_rx_note = 0;
+    sim_rx_vel = 0;
+    sim_rx_note_count = 0;
+    uint8_t abort_sysex_stream[] = { 0xF0, 0x7D, 0x01, 0x90, 60, 100 };
+    smc_midi_rx_feed_bytes(&dispatcher, abort_sysex_stream, sizeof(abort_sysex_stream));
+    assert(sim_rx_note_count == 1);
+    assert(sim_rx_note == 60 && sim_rx_vel == 100);
+
+    /* System Common 0xF2 must clear running status so trailing bytes don't trigger Note-On */
+    uint8_t sys_common_stream[] = { 0xF2, 0x00, 0x01, 62, 99 };
+    smc_midi_rx_feed_bytes(&dispatcher, sys_common_stream, sizeof(sys_common_stream));
+    assert(sim_rx_note_count == 1); /* Still 1! */
 
     printf("MIDI Dispatcher unit tests passed successfully!\n");
     return 0;

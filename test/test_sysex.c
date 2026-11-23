@@ -55,15 +55,19 @@ static void test_pad_map_get_set(void) {
     const uint8_t query[] = { SMC_SYSEX_START, SMC_SYSEX_MFG_ID, SMC_SYSEX_DEV_ID, SMC_CMD_GET_PAD_MAP, 1, 4, SMC_SYSEX_END };
     smc_sysex_feed_bytes(&sysex, query, sizeof(query));
 
-    assert(s_last_resp_len == 10);
+    assert(s_last_resp_len == 15);
     assert(s_last_resp[3] == SMC_CMD_RESP_PAD_MAP);
     assert(s_last_resp[4] == 1); /* Bank */
     assert(s_last_resp[5] == 4); /* Pad */
     assert(s_last_resp[6] == 56); /* Default Note 52 + 4 */
+    assert(s_last_resp[14] == SMC_SYSEX_END);
 
-    /* 2. Set Bank 1, Pad 4 to Note 64, Ch 3, Mode 1 */
+    /* 2. Set Bank 1, Pad 4 with extended chord & pressure payload */
     s_last_resp_len = 0;
-    const uint8_t set_cmd[] = { SMC_SYSEX_START, SMC_SYSEX_MFG_ID, SMC_SYSEX_DEV_ID, SMC_CMD_SET_PAD_MAP, 1, 4, 64, 3, 1, SMC_SYSEX_END };
+    const uint8_t set_cmd[] = {
+        SMC_SYSEX_START, SMC_SYSEX_MFG_ID, SMC_SYSEX_DEV_ID, SMC_CMD_SET_PAD_MAP,
+        1, 4, 64, 3, 1, 3, (uint8_t)(64 + 4), (uint8_t)(64 + 7), 64, 1, SMC_SYSEX_END
+    };
     smc_sysex_feed_bytes(&sysex, set_cmd, sizeof(set_cmd));
 
     assert(s_last_resp_len == 7);
@@ -75,8 +79,28 @@ static void test_pad_map_get_set(void) {
     assert(cfg.pads[1][4].note == 64);
     assert(cfg.pads[1][4].channel == 3);
     assert(cfg.pads[1][4].mode == 1);
+    assert(cfg.pads[1][4].chord_count == 3);
+    assert(cfg.pads[1][4].chord_offsets[0] == 4);
+    assert(cfg.pads[1][4].chord_offsets[1] == 7);
+    assert(cfg.pads[1][4].pressure_mode == 1);
+
+    /* 3. Round-trip GET_PAD_MAP verifies chord & pressure fields */
+    s_last_resp_len = 0;
+    smc_sysex_feed_bytes(&sysex, query, sizeof(query));
+    assert(s_last_resp_len == 15);
+    assert(s_last_resp[6] == 64);
+    assert(s_last_resp[9] == 3);
+    assert(s_last_resp[10] == 68);
+    assert(s_last_resp[11] == 71);
+    assert(s_last_resp[13] == 1);
 
     printf("PASS: test_pad_map_get_set\n");
+}
+
+static uint8_t s_last_change_cmd = 0;
+static void mock_change_cb(uint8_t cmd, void *ctx) {
+    (void)ctx;
+    s_last_change_cmd = cmd;
 }
 
 static void test_encoder_map_get_set(void) {
@@ -86,30 +110,36 @@ static void test_encoder_map_get_set(void) {
 
     smc_sysex_engine_t sysex;
     smc_sysex_init(&sysex, &cfg, mock_sysex_tx);
+    smc_sysex_set_change_callback(&sysex, mock_change_cb, NULL);
 
-    /* Set Bank 2, Encoder 5 to CC 85, Ch 0, step 2, min 10, max 100 */
+    /* Set Bank 2, Encoder 5 to CC 85, Ch 0, step 2, min 10, max 100, mode 2 */
     s_last_resp_len = 0;
-    const uint8_t set_cmd[] = { SMC_SYSEX_START, SMC_SYSEX_MFG_ID, SMC_SYSEX_DEV_ID, SMC_CMD_SET_ENC_MAP, 2, 5, 85, 0, 2, 10, 100, SMC_SYSEX_END };
+    s_last_change_cmd = 0;
+    const uint8_t set_cmd[] = { SMC_SYSEX_START, SMC_SYSEX_MFG_ID, SMC_SYSEX_DEV_ID, SMC_CMD_SET_ENC_MAP, 2, 5, 85, 0, 2, 10, 100, 2, SMC_SYSEX_END };
     smc_sysex_feed_bytes(&sysex, set_cmd, sizeof(set_cmd));
 
     assert(s_last_resp_len == 7);
     assert(s_last_resp[5] == SMC_STATUS_OK);
+    assert(s_last_change_cmd == SMC_CMD_SET_ENC_MAP);
     assert(cfg.encoders[2][5].cc == 85);
     assert(cfg.encoders[2][5].step_size == 2);
     assert(cfg.encoders[2][5].min_val == 10);
     assert(cfg.encoders[2][5].max_val == 100);
+    assert(cfg.encoders[2][5].mode == 2);
 
     /* Query Bank 2, Encoder 5 */
     s_last_resp_len = 0;
     const uint8_t query[] = { SMC_SYSEX_START, SMC_SYSEX_MFG_ID, SMC_SYSEX_DEV_ID, SMC_CMD_GET_ENC_MAP, 2, 5, SMC_SYSEX_END };
     smc_sysex_feed_bytes(&sysex, query, sizeof(query));
 
-    assert(s_last_resp_len == 12);
+    assert(s_last_resp_len == 13);
     assert(s_last_resp[3] == SMC_CMD_RESP_ENC_MAP);
     assert(s_last_resp[6] == 85);
     assert(s_last_resp[8] == 2);
     assert(s_last_resp[9] == 10);
     assert(s_last_resp[10] == 100);
+    assert(s_last_resp[11] == 2);
+    assert(s_last_resp[12] == SMC_SYSEX_END);
 
     printf("PASS: test_encoder_map_get_set\n");
 }

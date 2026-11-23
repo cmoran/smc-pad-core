@@ -88,6 +88,20 @@ static inline uint32_t app_get_millis(void) {
 }
 #endif
 
+/* Hardware button/LED indices emitted by bsp/smcpad_core.o */
+typedef enum {
+    SMCPAD_BTN_BLUETOOTH   = 0,
+    SMCPAD_BTN_PAD_BANK    = 1,
+    SMCPAD_BTN_KNOB_BANK   = 2,
+    SMCPAD_BTN_LEFT_ARROW  = 3,
+    SMCPAD_BTN_RIGHT_ARROW = 4,
+    SMCPAD_BTN_PLAY        = 5,
+    SMCPAD_BTN_STOP        = 6,
+    SMCPAD_BTN_REC         = 7,
+    SMCPAD_BTN_SHIFT       = 8,
+    SMCPAD_BTN_NOTE_REPEAT = 9
+} smcpad_hw_btn_t;
+
 /* Static system state structures (Strict zero dynamic allocation) */
 static smc_event_queue_t     g_event_queue;
 static smc_encoder_state_t   g_encoder_engine;
@@ -114,6 +128,8 @@ static bool                  g_repeat_sync_enabled = false;
 static volatile uint32_t     g_midi_clock_ticks = 0;
 static volatile bool         g_midi_clock_running = false;
 static uint32_t              g_last_repeat_clock_tick = 0;
+static uint32_t              g_last_clock_tick_ms = 0;
+static uint16_t              g_clock_tick_interval_ms = 21; /* ~120 BPM (24 PPQN -> 20.8 ms/tick) */
 static uint16_t              g_repeat_bpm = 120;        /* 30..300 BPM */
 static uint8_t               g_repeat_rate_idx = 4;     /* Default 1/16 */
 static uint8_t               g_repeat_swing_idx = 0;    /* 0..4 (50%, 54%, 58%, 62%, 66%) */
@@ -138,10 +154,20 @@ static int8_t                g_enc_swing_accum = 0;
 static void app_midi_clock_cb(uint8_t msg_type, void *ctx) {
     (void)ctx;
     if (msg_type == 0xF8u) { /* Timing Clock (24 PPQN) */
+        uint32_t now = app_get_millis();
+        if (g_last_clock_tick_ms > 0) {
+            uint32_t dt = now - g_last_clock_tick_ms;
+            if (dt >= 4u && dt <= 200u) {
+                /* Smooth external clock tick interval (ms per 24-PPQN pulse) */
+                g_clock_tick_interval_ms = (uint16_t)(((uint32_t)g_clock_tick_interval_ms * 3u + dt) / 4u);
+            }
+        }
+        g_last_clock_tick_ms = now;
         g_midi_clock_ticks++;
     } else if (msg_type == 0xFAu) { /* Start */
         g_midi_clock_ticks = 0;
         g_last_repeat_clock_tick = 0;
+        g_last_clock_tick_ms = 0;
         g_midi_clock_running = true;
     } else if (msg_type == 0xFBu) { /* Continue */
         g_midi_clock_running = true;
@@ -290,6 +316,7 @@ static void hal_ble_rx_on_byte(uint8_t byte, void *ctx) {
     uint32_t next = (g_ble_rx_fifo.tail + 1u) & (SMC_BLE_RX_BUF_SIZE - 1u);
     if (next != g_ble_rx_fifo.head) {
         g_ble_rx_fifo.buffer[g_ble_rx_fifo.tail] = byte;
+        __asm__ __volatile__("" ::: "memory");
         g_ble_rx_fifo.tail = next;
     }
 }
@@ -350,7 +377,7 @@ static bool hal_ble_raw_send(const uint8_t *data, uint16_t len) {
 
 static void hal_send_ble_packet(const smc_midi_raw_msg_t *msg) {
     if (msg && msg->len > 0) {
-        smc_ble_midi_send_message(&g_ble_engine, msg->bytes, msg->len, g_system_ticks);
+        smc_ble_midi_send_message(&g_ble_engine, msg->bytes, msg->len, app_get_millis());
     }
 }
 
@@ -378,16 +405,27 @@ static void hal_send_sysex_packet(const uint8_t *data, size_t len) {
         smcpad_usbmidi_write(p);
     }
 #endif
-    smc_ble_midi_send_sysex(&g_ble_engine, data, (uint16_t)len, g_system_ticks);
+    smc_ble_midi_send_sysex(&g_ble_engine, data, (uint16_t)len, app_get_millis());
 }
 
 static uint32_t get_pad_idle_color(uint8_t p);
+static void restore_bank_leds(void);
+
+static void app_sysex_config_changed(uint8_t cmd, void *ctx) {
+    (void)ctx;
+    if (cmd == SMC_CMD_SET_SCALE_CFG || cmd == SMC_CMD_SET_RGB_CFG || cmd == SMC_CMD_FACTORY_RESET) {
+        if (!g_midi_engine.shift_active && !g_note_repeat_cfg_mode) {
+            restore_bank_leds();
+        }
+    }
+}
 
 static void hal_host_note_feedback(uint8_t ch, uint8_t note, uint8_t vel, void *ctx) {
     (void)ch;
     (void)ctx;
     uint8_t bank = smc_config_get_pad_bank();
     const smc_bank_palette_t *pal = smc_rgb_led_get_bank_palette(bank);
+    bool updated = false;
 
     for (uint8_t p = 0; p < SMC_NUM_PADS; p++) {
         if (g_config.pads[bank][p].note == note) {
@@ -398,12 +436,19 @@ static void hal_host_note_feedback(uint8_t ch, uint8_t note, uint8_t vel, void *
                 : get_pad_idle_color(p);
 #ifndef SMC_HOST_TEST
             smcpad_rgb_set(p, color);
-            smcpad_rgb_show();
 #else
             smc_rgb_led_set_pad(p, color);
-            smc_rgb_led_show();
 #endif
+            updated = true;
         }
+    }
+
+    if (updated) {
+#ifndef SMC_HOST_TEST
+        smcpad_rgb_show();
+#else
+        smc_rgb_led_show();
+#endif
     }
 }
 
@@ -516,6 +561,7 @@ void setup(void) {
 
     /* 2. Initialize SysEx Protocol Engine */
     smc_sysex_init(&g_sysex_engine, &g_config, hal_send_sysex_packet);
+    smc_sysex_set_change_callback(&g_sysex_engine, app_sysex_config_changed, NULL);
 
     /* 3. Initialize BLE-MIDI Engine & Radio Peripheral */
     smc_ble_midi_init(&g_ble_engine, hal_ble_raw_send);
@@ -563,14 +609,15 @@ void loop(void) {
     uint8_t rx_pkt[4];
     while (smcpad_usbmidi_read(rx_pkt)) {
         uint8_t cin = rx_pkt[0] & 0x0Fu;
-        if (cin == 0x08 || cin == 0x09 || cin == 0x0B || cin == 0x04 || cin == 0x07) {
+        if (cin == 0x03 || cin == 0x04 || cin == 0x07 || cin == 0x08 ||
+            cin == 0x09 || cin == 0x0A || cin == 0x0B || cin == 0x0E) {
             smc_midi_rx_feed_byte(&g_midi_engine, rx_pkt[1]);
             smc_midi_rx_feed_byte(&g_midi_engine, rx_pkt[2]);
             smc_midi_rx_feed_byte(&g_midi_engine, rx_pkt[3]);
-        } else if (cin == 0x06) {
+        } else if (cin == 0x02 || cin == 0x06 || cin == 0x0C || cin == 0x0D) {
             smc_midi_rx_feed_byte(&g_midi_engine, rx_pkt[1]);
             smc_midi_rx_feed_byte(&g_midi_engine, rx_pkt[2]);
-        } else if (cin == 0x05) {
+        } else if (cin == 0x05 || cin == 0x0F) {
             smc_midi_rx_feed_byte(&g_midi_engine, rx_pkt[1]);
         }
     }
@@ -578,6 +625,7 @@ void loop(void) {
     /* 1b. Drain incoming BLE-MIDI bytes */
     while (g_ble_rx_fifo.head != g_ble_rx_fifo.tail) {
         uint8_t b = g_ble_rx_fifo.buffer[g_ble_rx_fifo.head];
+        __asm__ __volatile__("" ::: "memory");
         g_ble_rx_fifo.head = (g_ble_rx_fifo.head + 1u) & (SMC_BLE_RX_BUF_SIZE - 1u);
         smc_midi_rx_feed_byte(&g_midi_engine, b);
     }
@@ -586,14 +634,21 @@ void loop(void) {
     uint16_t active_repeat_mask = g_held_pads_mask | g_latched_pads_mask;
     if (g_note_repeat_enabled && active_repeat_mask > 0 && !g_note_repeat_cfg_mode) {
         uint32_t now = app_get_millis();
-        uint16_t gate_ms = (uint16_t)((uint32_t)g_repeat_current_period_ms * 60u / 100u);
+        uint16_t step_period_ms = g_repeat_current_period_ms;
+        if (g_repeat_sync_enabled) {
+            uint16_t clock_ticks_per_step = get_repeat_clock_ticks(g_repeat_rate_idx);
+            step_period_ms = (uint16_t)((uint32_t)g_clock_tick_interval_ms * clock_ticks_per_step);
+            if (step_period_ms < 20u) step_period_ms = 20u;
+        }
+        uint16_t gate_ms = (uint16_t)((uint32_t)step_period_ms * 60u / 100u);
         if (gate_ms < 12) gate_ms = 12;
 
         bool trigger_step = false;
         if (g_repeat_sync_enabled) {
             uint16_t clock_ticks_per_step = get_repeat_clock_ticks(g_repeat_rate_idx);
-            if (!g_repeat_gate_active) {
-                if ((g_last_repeat_clock_tick == 0) || (g_midi_clock_ticks - g_last_repeat_clock_tick >= clock_ticks_per_step)) {
+            if (!g_repeat_gate_active && g_midi_clock_running) {
+                if ((g_last_repeat_clock_tick == 0 && g_midi_clock_ticks > 0) ||
+                    (g_midi_clock_ticks - g_last_repeat_clock_tick >= clock_ticks_per_step)) {
                     trigger_step = true;
                     g_last_repeat_clock_tick = g_midi_clock_ticks;
                 }
@@ -897,16 +952,32 @@ void loop(void) {
             ev.value = hw_ev.value;
             if (ev.index < SMC_NUM_ENCODERS) {
                 uint8_t bank = smc_config_get_encoder_bank();
-                int32_t val = (int32_t)g_encoder_engine.configs[bank][ev.index].value + ev.value;
-                if (val < 0) val = 0;
-                if (val > 127) val = 127;
+                const smc_encoder_cfg_t *e_cfg = smc_config_get_active_encoder(&g_config, ev.index);
+                int32_t step = (e_cfg && e_cfg->step_size > 0) ? (int32_t)e_cfg->step_size : 1;
+                int32_t delta = (int32_t)ev.value * step;
+                if (g_encoder_engine.acceleration_enabled) {
+                    uint32_t now_enc = app_get_millis();
+                    uint32_t dt = now_enc - g_encoder_engine.last_tick_timestamp[ev.index];
+                    g_encoder_engine.last_tick_timestamp[ev.index] = now_enc;
+                    if (dt < 25u) {
+                        delta *= 4;
+                    } else if (dt < 60u) {
+                        delta *= 2;
+                    }
+                }
+                ev.value = (int16_t)delta;
+                int32_t min_v = e_cfg ? (int32_t)e_cfg->min_val : 0;
+                int32_t max_v = e_cfg ? (int32_t)e_cfg->max_val : 127;
+                int32_t val = (int32_t)g_encoder_engine.configs[bank][ev.index].value + delta;
+                if (val < min_v) val = min_v;
+                if (val > max_v) val = max_v;
                 g_encoder_engine.configs[bank][ev.index].value = (uint8_t)val;
             }
             smc_midi_process_event(&g_midi_engine, &g_encoder_engine, &ev);
             break;
 
         case 3: /* SMCPAD_EV_BUTTON_DOWN */
-            if (hw_ev.index == 0) { /* Bluetooth (Btn 0) */
+            if (hw_ev.index == SMCPAD_BTN_BLUETOOTH) {
                 g_ble_enabled = !g_ble_enabled;
                 if (g_ble_enabled) {
 #ifndef SMC_HOST_TEST
@@ -932,13 +1003,13 @@ void loop(void) {
 #endif
                     smc_ble_midi_set_connected(&g_ble_engine, false);
                     smc_ble_midi_set_subscribed(&g_ble_engine, false);
-                    smcpad_led_set(0, 0);
+                    smcpad_led_set(SMCPAD_BTN_BLUETOOTH, 0);
                 }
-            } else if (hw_ev.index == 8) { /* Shift (Btn 8) */
+            } else if (hw_ev.index == SMCPAD_BTN_SHIFT) {
                 g_midi_engine.shift_active = true;
-                smcpad_led_set(8, 1);
+                smcpad_led_set(SMCPAD_BTN_SHIFT, 1);
                 refresh_shift_status_view();
-            } else if (hw_ev.index == 9) { /* Note Repeat (Btn 9) */
+            } else if (hw_ev.index == SMCPAD_BTN_NOTE_REPEAT) {
                 g_note_repeat_btn_held = true;
                 if (g_midi_engine.shift_active) {
                     /* Shift + Note Repeat = Toggle Repeat Config Mode */
@@ -951,7 +1022,7 @@ void loop(void) {
                 } else {
                     /* Normal Note Repeat Toggle */
                     g_note_repeat_enabled = !g_note_repeat_enabled;
-                    smcpad_led_set(9, g_note_repeat_enabled);
+                    smcpad_led_set(SMCPAD_BTN_NOTE_REPEAT, g_note_repeat_enabled);
                     if (!g_note_repeat_enabled) {
                         uint16_t all_active = g_held_pads_mask | g_latched_pads_mask;
                         for (uint8_t p = 0; p < SMC_NUM_PADS; p++) {
@@ -973,50 +1044,43 @@ void loop(void) {
                         g_repeat_swing_step = 0;
                     }
                 }
-            } else if (hw_ev.index == 5) { /* Play (Btn 5) */
-                smcpad_led_set(5, 1);
+            } else if (hw_ev.index == SMCPAD_BTN_PLAY) {
+                smcpad_led_set(SMCPAD_BTN_PLAY, 1);
                 /* Emit Mackie Play Note 94 (0x5E), vel 127, ch 0 */
                 smc_midi_raw_msg_t play_msg = { .bytes = { 0x90, 0x5E, 127 }, .len = 3 };
-                hal_send_midi_packet(&play_msg);
-                if (g_midi_engine.send_ble_msg) g_midi_engine.send_ble_msg(&play_msg);
-                if (g_midi_engine.send_uart_msg) g_midi_engine.send_uart_msg(&play_msg);
-            } else if (hw_ev.index == 6) { /* Stop / Pause (Btn 6) */
+                smc_midi_send_raw(&g_midi_engine, &play_msg);
+            } else if (hw_ev.index == SMCPAD_BTN_STOP) {
                 if (g_midi_engine.shift_active) {
-                    /* Shift + Pause = Panic */
+                    /* Shift + Stop = Panic */
                     smc_midi_panic(&g_midi_engine);
                     restore_bank_leds();
                 } else {
-                    smcpad_led_set(6, 1);
+                    smcpad_led_set(SMCPAD_BTN_STOP, 1);
                     /* Emit Mackie Stop Note 93 (0x5D), vel 127, ch 0 */
                     smc_midi_raw_msg_t stop_msg = { .bytes = { 0x90, 0x5D, 127 }, .len = 3 };
-                    hal_send_midi_packet(&stop_msg);
-                    if (g_midi_engine.send_ble_msg) g_midi_engine.send_ble_msg(&stop_msg);
-                    if (g_midi_engine.send_uart_msg) g_midi_engine.send_uart_msg(&stop_msg);
+                    smc_midi_send_raw(&g_midi_engine, &stop_msg);
                 }
-            } else if (hw_ev.index == 7) { /* Record (Btn 7) */
-                smcpad_led_set(7, 1);
+            } else if (hw_ev.index == SMCPAD_BTN_REC) {
+                smcpad_led_set(SMCPAD_BTN_REC, 1);
                 /* Emit Mackie Record Note 95 (0x5F), vel 127, ch 0 */
                 smc_midi_raw_msg_t rec_msg = { .bytes = { 0x90, 0x5F, 127 }, .len = 3 };
-                hal_send_midi_packet(&rec_msg);
-                if (g_midi_engine.send_ble_msg) g_midi_engine.send_ble_msg(&rec_msg);
-                if (g_midi_engine.send_uart_msg) g_midi_engine.send_uart_msg(&rec_msg);
-            } else if (hw_ev.index == 1) { /* Pad Bank (Btn 1) */
-                g_pad_bank ^= 1;
+                smc_midi_send_raw(&g_midi_engine, &rec_msg);
+            } else if (hw_ev.index == SMCPAD_BTN_PAD_BANK) {
+                g_pad_bank = (uint8_t)((g_pad_bank + 1u) & 0x03u);
                 smc_config_set_pad_bank(g_pad_bank);
                 restore_bank_leds();
-                smcpad_led_set(1, g_pad_bank);
-            } else if (hw_ev.index == 2) { /* Knob Bank (Btn 2) */
-                g_encoder_bank ^= 1;
+                smcpad_led_set(SMCPAD_BTN_PAD_BANK, g_pad_bank != 0);
+            } else if (hw_ev.index == SMCPAD_BTN_KNOB_BANK) {
+                g_encoder_bank = (uint8_t)((g_encoder_bank + 1u) & 0x03u);
                 smc_config_set_encoder_bank(g_encoder_bank);
-                smcpad_led_set(2, g_encoder_bank);
-            } else if (hw_ev.index == 3) { /* Left Arrow (Btn 3) */
-                smcpad_led_set(3, 1);
+                smc_encoder_set_bank(&g_encoder_engine, g_encoder_bank);
+                smcpad_led_set(SMCPAD_BTN_KNOB_BANK, g_encoder_bank != 0);
+            } else if (hw_ev.index == SMCPAD_BTN_LEFT_ARROW) {
+                smcpad_led_set(SMCPAD_BTN_LEFT_ARROW, 1);
                 if (g_preset_idx == 1 && !g_midi_engine.shift_active) {
                     /* Preset 2 (DAW mode): Mackie Bank Left Note 46 (0x2E) */
                     smc_midi_raw_msg_t bleft = { .bytes = { 0x90, 0x2E, 127 }, .len = 3 };
-                    hal_send_midi_packet(&bleft);
-                    if (g_midi_engine.send_ble_msg) g_midi_engine.send_ble_msg(&bleft);
-                    if (g_midi_engine.send_uart_msg) g_midi_engine.send_uart_msg(&bleft);
+                    smc_midi_send_raw(&g_midi_engine, &bleft);
                 } else if (g_midi_engine.shift_active) {
                     /* Shift + Left: Decrement MIDI channel (0..15) */
                     g_channel_offset = (g_channel_offset <= 0) ? 15 : g_channel_offset - 1;
@@ -1027,14 +1091,12 @@ void loop(void) {
                     if (g_octave_offset < -48) g_octave_offset = -48;
                     smc_midi_set_octave_offset(&g_midi_engine, g_octave_offset);
                 }
-            } else if (hw_ev.index == 4) { /* Right Arrow (Btn 4) */
-                smcpad_led_set(4, 1);
+            } else if (hw_ev.index == SMCPAD_BTN_RIGHT_ARROW) {
+                smcpad_led_set(SMCPAD_BTN_RIGHT_ARROW, 1);
                 if (g_preset_idx == 1 && !g_midi_engine.shift_active) {
                     /* Preset 2 (DAW mode): Mackie Bank Right Note 47 (0x2F) */
                     smc_midi_raw_msg_t bright = { .bytes = { 0x90, 0x2F, 127 }, .len = 3 };
-                    hal_send_midi_packet(&bright);
-                    if (g_midi_engine.send_ble_msg) g_midi_engine.send_ble_msg(&bright);
-                    if (g_midi_engine.send_uart_msg) g_midi_engine.send_uart_msg(&bright);
+                    smc_midi_send_raw(&g_midi_engine, &bright);
                 } else if (g_midi_engine.shift_active) {
                     /* Shift + Right: Increment MIDI channel (0..15) */
                     g_channel_offset = (g_channel_offset < 0) ? 1 : (g_channel_offset + 1) & 15;
@@ -1049,48 +1111,38 @@ void loop(void) {
             break;
 
         case 4: /* SMCPAD_EV_BUTTON_UP */
-            if (hw_ev.index == 8) {
+            if (hw_ev.index == SMCPAD_BTN_SHIFT) {
                 g_midi_engine.shift_active = false;
-                smcpad_led_set(8, 0);
+                smcpad_led_set(SMCPAD_BTN_SHIFT, 0);
                 if (g_note_repeat_cfg_mode) {
                     g_note_repeat_cfg_mode = false;
                 }
                 restore_bank_leds();
-            } else if (hw_ev.index == 9) {
+            } else if (hw_ev.index == SMCPAD_BTN_NOTE_REPEAT) {
                 g_note_repeat_btn_held = false;
-            } else if (hw_ev.index == 5) { /* Play release */
-                smcpad_led_set(5, 0);
+            } else if (hw_ev.index == SMCPAD_BTN_PLAY) {
+                smcpad_led_set(SMCPAD_BTN_PLAY, 0);
                 smc_midi_raw_msg_t off = { .bytes = { 0x80, 0x5E, 0 }, .len = 3 };
-                hal_send_midi_packet(&off);
-                if (g_midi_engine.send_ble_msg) g_midi_engine.send_ble_msg(&off);
-                if (g_midi_engine.send_uart_msg) g_midi_engine.send_uart_msg(&off);
-            } else if (hw_ev.index == 6 && !g_midi_engine.shift_active) { /* Stop release */
-                smcpad_led_set(6, 0);
+                smc_midi_send_raw(&g_midi_engine, &off);
+            } else if (hw_ev.index == SMCPAD_BTN_STOP && !g_midi_engine.shift_active) {
+                smcpad_led_set(SMCPAD_BTN_STOP, 0);
                 smc_midi_raw_msg_t off = { .bytes = { 0x80, 0x5D, 0 }, .len = 3 };
-                hal_send_midi_packet(&off);
-                if (g_midi_engine.send_ble_msg) g_midi_engine.send_ble_msg(&off);
-                if (g_midi_engine.send_uart_msg) g_midi_engine.send_uart_msg(&off);
-            } else if (hw_ev.index == 7) { /* Record release */
-                smcpad_led_set(7, 0);
+                smc_midi_send_raw(&g_midi_engine, &off);
+            } else if (hw_ev.index == SMCPAD_BTN_REC) {
+                smcpad_led_set(SMCPAD_BTN_REC, 0);
                 smc_midi_raw_msg_t off = { .bytes = { 0x80, 0x5F, 0 }, .len = 3 };
-                hal_send_midi_packet(&off);
-                if (g_midi_engine.send_ble_msg) g_midi_engine.send_ble_msg(&off);
-                if (g_midi_engine.send_uart_msg) g_midi_engine.send_uart_msg(&off);
-            } else if (hw_ev.index == 3) {
-                smcpad_led_set(3, 0);
+                smc_midi_send_raw(&g_midi_engine, &off);
+            } else if (hw_ev.index == SMCPAD_BTN_LEFT_ARROW) {
+                smcpad_led_set(SMCPAD_BTN_LEFT_ARROW, 0);
                 if (g_preset_idx == 1 && !g_midi_engine.shift_active) {
                     smc_midi_raw_msg_t off = { .bytes = { 0x80, 0x2E, 0 }, .len = 3 };
-                    hal_send_midi_packet(&off);
-                    if (g_midi_engine.send_ble_msg) g_midi_engine.send_ble_msg(&off);
-                    if (g_midi_engine.send_uart_msg) g_midi_engine.send_uart_msg(&off);
+                    smc_midi_send_raw(&g_midi_engine, &off);
                 }
-            } else if (hw_ev.index == 4) {
-                smcpad_led_set(4, 0);
+            } else if (hw_ev.index == SMCPAD_BTN_RIGHT_ARROW) {
+                smcpad_led_set(SMCPAD_BTN_RIGHT_ARROW, 0);
                 if (g_preset_idx == 1 && !g_midi_engine.shift_active) {
                     smc_midi_raw_msg_t off = { .bytes = { 0x80, 0x2F, 0 }, .len = 3 };
-                    hal_send_midi_packet(&off);
-                    if (g_midi_engine.send_ble_msg) g_midi_engine.send_ble_msg(&off);
-                    if (g_midi_engine.send_uart_msg) g_midi_engine.send_uart_msg(&off);
+                    smc_midi_send_raw(&g_midi_engine, &off);
                 }
             }
             break;
@@ -1102,13 +1154,13 @@ void loop(void) {
 
     /* 4. Update Bluetooth Status LED */
     if (!g_ble_enabled) {
-        smcpad_led_set(0, 0);
+        smcpad_led_set(SMCPAD_BTN_BLUETOOTH, 0);
     } else {
         bool connected = (smcpad_ble_connection() > 0) && (smcpad_ble_subscribed(SMC_BLE_MIDI_HANDLE_VAL) > 0);
         if (connected) {
-            smcpad_led_set(0, 1);
+            smcpad_led_set(SMCPAD_BTN_BLUETOOTH, 1);
         } else {
-            smcpad_led_set(0, ((app_get_millis() / 500u) & 1u) != 0);
+            smcpad_led_set(SMCPAD_BTN_BLUETOOTH, ((app_get_millis() / 500u) & 1u) != 0);
         }
     }
 
@@ -1122,14 +1174,18 @@ void loop(void) {
         if (!usb && mv > 1000 && mv < 3500) {
             g_low_battery_alert = true;
         } else if (usb || mv >= 3600) {
-            g_low_battery_alert = false;
+            if (g_low_battery_alert) {
+                g_low_battery_alert = false;
+                smcpad_led_set(SMCPAD_BTN_LEFT_ARROW, 0);
+                smcpad_led_set(SMCPAD_BTN_RIGHT_ARROW, 0);
+            }
         }
 #endif
     }
     if (g_low_battery_alert) {
         bool blink = ((now_battery / 250u) & 1u) != 0;
-        smcpad_led_set(3, blink ? 1 : 0);
-        smcpad_led_set(4, blink ? 1 : 0);
+        smcpad_led_set(SMCPAD_BTN_LEFT_ARROW, blink ? 1 : 0);
+        smcpad_led_set(SMCPAD_BTN_RIGHT_ARROW, blink ? 1 : 0);
     }
 
     smcpad_yield();

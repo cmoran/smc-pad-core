@@ -69,40 +69,52 @@ bool smc_ble_midi_send_sysex(smc_ble_midi_t *ble,
     uint8_t header = (uint8_t)(0x80u | ((ts >> 7) & 0x3Fu));
     uint8_t ts_low = (uint8_t)(0x80u | (ts & 0x7Fu));
 
+    /* Per Apple/MMA BLE-MIDI spec, 0xF7 must be preceded by a timestamp byte */
+    bool has_end = (sysex_data[len - 1] == 0xF7u);
+    uint16_t body_len = has_end ? (uint16_t)(len - 1) : len;
+
     uint16_t offset = 0;
     bool is_first = true;
+    bool end_sent = !has_end;
 
-    while (offset < len) {
-        uint16_t room;
+    while (offset < body_len) {
+        uint16_t hdr_len = is_first ? 2u : 1u;
+        uint16_t room = (max_payload > hdr_len) ? (uint16_t)(max_payload - hdr_len) : 1u;
+
+        ble->tx_buf[0] = header;
         if (is_first) {
-            ble->tx_buf[0] = header;
             ble->tx_buf[1] = ts_low;
-            room = (max_payload > 2) ? (uint16_t)(max_payload - 2) : 1;
-        } else {
-            ble->tx_buf[0] = header;
-            room = (max_payload > 1) ? (uint16_t)(max_payload - 1) : 1;
         }
 
-        uint16_t chunk = (uint16_t)(len - offset);
+        uint16_t chunk = (uint16_t)(body_len - offset);
         if (chunk > room) {
             chunk = room;
         }
 
-        uint16_t pkt_len;
-        if (is_first) {
-            memcpy(&ble->tx_buf[2], &sysex_data[offset], chunk);
-            pkt_len = (uint16_t)(chunk + 2);
-            is_first = false;
-        } else {
-            memcpy(&ble->tx_buf[1], &sysex_data[offset], chunk);
-            pkt_len = (uint16_t)(chunk + 1);
+        memcpy(&ble->tx_buf[hdr_len], &sysex_data[offset], chunk);
+        uint16_t pkt_len = (uint16_t)(hdr_len + chunk);
+        offset = (uint16_t)(offset + chunk);
+        is_first = false;
+
+        /* If we finished the body and 2 bytes remain in this packet, append [ts_low, 0xF7] */
+        if (offset == body_len && has_end && (uint16_t)(max_payload - pkt_len) >= 2u) {
+            ble->tx_buf[pkt_len++] = ts_low;
+            ble->tx_buf[pkt_len++] = 0xF7u;
+            end_sent = true;
         }
 
         if (!ble->send_fn(ble->tx_buf, pkt_len)) {
             return false;
         }
+    }
 
-        offset = (uint16_t)(offset + chunk);
+    if (!end_sent) {
+        ble->tx_buf[0] = header;
+        ble->tx_buf[1] = ts_low;
+        ble->tx_buf[2] = 0xF7u;
+        if (!ble->send_fn(ble->tx_buf, 3u)) {
+            return false;
+        }
     }
 
     return true;
@@ -112,7 +124,7 @@ void smc_ble_midi_parse_rx(const uint8_t *data,
                            uint16_t len,
                            void (*on_byte)(uint8_t byte, void *ctx),
                            void *user_ctx) {
-    if (!data || len < 3 || !on_byte) return;
+    if (!data || len < 2 || !on_byte) return;
 
     /* First byte must be header (bit 7 set) */
     if (!(data[0] & 0x80u)) return;
@@ -120,19 +132,16 @@ void smc_ble_midi_parse_rx(const uint8_t *data,
     /*
      * Parse BLE-MIDI stream:
      * data[0] is Header (0x80 | ts_high).
-     * data[1] is Timestamp Low (0x80 | ts_low).
-     * Subsequent bytes are MIDI status or data bytes.
-     * If a byte has bit 7 set and is followed by another byte with bit 7 set (or is in timestamp position),
-     * it represents a sub-packet timestamp.
+     * data[1] is Timestamp Low (bit 7 set) for standard/SysEx-start packets,
+     *         OR SysEx continuation payload (bit 7 clear) for multi-packet SysEx.
      */
-    uint16_t i = 2; /* Skip header and initial timestamp */
+    uint16_t i = (data[1] & 0x80u) ? 2u : 1u;
     while (i < len) {
         uint8_t b = data[i];
 
-        if (b & 0x80u) {
-            /* Check if this is an inline timestamp byte preceding another status byte */
-            if ((i + 1 < len) && (data[i + 1] & 0x80u) && (data[i + 1] != 0xF7u)) {
-                /* data[i] is an inline timestamp; skip it */
+        if ((b & 0x80u) && b != 0xF0u && b != 0xF7u) {
+            /* Inline timestamp byte preceding any status byte (including 0xF7) */
+            if ((i + 1 < len) && (data[i + 1] & 0x80u)) {
                 i++;
                 continue;
             }

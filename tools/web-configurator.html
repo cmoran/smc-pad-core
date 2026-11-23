@@ -492,10 +492,12 @@
           chord_offsets: [0, 0, 0],
           pressure_mode: 0
         })),
-        encoders: Array(8).fill(0).map((_, e) => ({ cc: 16 + e, channel: 0, step: 1, min: 0, max: 127, value: 0 }))
+        encoders: Array(8).fill(0).map((_, e) => ({ cc: 16 + (b * 8) + e, channel: 0, step: 1, min: 0, max: 127, mode: 0, value: 0 }))
       })),
       curve: 0,
       threshold: 80,
+      dynamicRange: 1000,
+      scanWindowMs: 3,
       scale: { enabled: false, root: 0, type: 0 }
     };
 
@@ -568,8 +570,10 @@
           document.getElementById("btnConnect").innerText = "Reconnect";
           logMsg("rx", `Paired with ${midiIn.name}`);
 
-          // Query Device Info
+          // Query Device Info, Calibration, and Scale Config
           sendSysEx([0xF0, 0x7D, 0x01, 0x01, 0xF7]);
+          sendSysEx([0xF0, 0x7D, 0x01, 0x20, 0xF7]);
+          sendSysEx([0xF0, 0x7D, 0x01, 0x24, 0xF7]);
         } else {
           alert("No MIDI devices detected. Make sure your SMC-Pad is plugged in via USB.");
         }
@@ -621,6 +625,40 @@
               };
               if (b === activeBank) renderPads();
             }
+          } else if (cmd === 0x16) {
+            // Encoder Map Response
+            const b = data[4], e = data[5];
+            if (b < 4 && e < 8 && data.length >= 12) {
+              const prevVal = config.banks[b].encoders[e]?.value || 0;
+              config.banks[b].encoders[e] = {
+                cc: data[6],
+                channel: data[7],
+                step: data[8] || 1,
+                min: data[9],
+                max: data[10],
+                mode: (data.length >= 13) ? data[11] : 0,
+                value: prevVal
+              };
+              if (b === activeBank) renderKnobs();
+            }
+          } else if (cmd === 0x22 && data.length >= 13) {
+            // Calibration Response
+            const st = (data[4] & 0x7F) | ((data[5] & 0x7F) << 7);
+            const dr = (data[8] & 0x7F) | ((data[9] & 0x7F) << 7);
+            const win = data[10] & 0x7F;
+            const curve = data[11] & 0x7F;
+            config.threshold = st;
+            config.dynamicRange = dr;
+            config.scanWindowMs = win;
+            config.curve = curve;
+            document.getElementById("inpThreshold").value = st;
+            document.getElementById("lblThreshold").innerText = st;
+            document.getElementById("inpCurve").value = curve;
+            logMsg("rx", `Calibration loaded: Thresh=${st}, Range=${dr}, Win=${win}ms, Curve=${curve}`);
+          } else if (cmd === 0x32 && data.length >= 14) {
+            // RGB Config Response
+            const mode = data[12] & 0x7F;
+            logMsg("rx", `RGB Config loaded: Mode=${mode === 1 ? "HOST" : "LOCAL"}`);
           } else if (cmd === 0x26) {
             // Scale Config Response
             config.scale.enabled = (data[4] !== 0);
@@ -1118,11 +1156,13 @@
         calWizard.hard = vel;
         logMsg("rx", `Calibration Strike 3 captured: Vel ${vel}`);
 
-        // Compute optimal calibration
-        calWizard.optThreshold = Math.max(25, Math.min(150, Math.round(calWizard.soft * 0.75)));
-        const spread = Math.max(30, calWizard.hard - calWizard.soft);
-        calWizard.optRange = Math.min(1023, Math.max(300, spread * 10));
-        calWizard.optCurve = (spread < 50) ? 1 : 0; // Soft curve if narrow, Linear if wide
+        // Compute optimal calibration (scale MIDI velocity 1..127 into 10-bit ADC space)
+        const softAdcEst = calWizard.soft * 8;
+        const hardAdcEst = calWizard.hard * 8;
+        calWizard.optThreshold = Math.max(25, Math.min(150, Math.round(softAdcEst * 0.25)));
+        const spread = Math.max(240, hardAdcEst - softAdcEst);
+        calWizard.optRange = Math.min(1023, Math.max(300, Math.round(spread)));
+        calWizard.optCurve = ((calWizard.hard - calWizard.soft) < 50) ? 1 : 0; // Soft curve if narrow, Linear if wide
 
         const curveNames = ["Linear", "Soft (Sensitive)", "Hard (Dynamic)", "Fixed"];
         document.getElementById("calStepBadge").innerText = "Complete!";
@@ -1152,6 +1192,7 @@
       document.getElementById("inpThreshold").value = calWizard.optThreshold;
       document.getElementById("lblThreshold").innerText = calWizard.optThreshold;
       document.getElementById("inpCurve").value = calWizard.optCurve;
+      config.dynamicRange = calWizard.optRange;
 
       uploadCalibration();
       cancelCalibration();
@@ -1162,13 +1203,21 @@
     function uploadCalibration() {
       const curve = parseInt(document.getElementById("inpCurve").value, 10);
       const thresh = parseInt(document.getElementById("inpThreshold").value, 10);
+      const rel = Math.max(1, Math.floor(thresh / 2));
+      const dr = Math.min(1023, Math.max(100, config.dynamicRange || 1000));
+      const win = Math.min(20, Math.max(1, config.scanWindowMs || 3));
+
+      config.curve = curve;
+      config.threshold = thresh;
+      config.dynamicRange = dr;
+
       // SET_CALIBRATION: 0xF0 0x7D 0x01 0x21 <st_lsb> <st_msb> <rt_lsb> <rt_msb> <dr_lsb> <dr_msb> <win> <curve> 0xF7
       sendSysEx([
         0xF0, 0x7D, 0x01, 0x21,
         thresh & 0x7F, (thresh >> 7) & 0x7F,
-        (thresh / 2) & 0x7F, ((thresh / 2) >> 7) & 0x7F,
-        0x70, 0x07, // Dynamic range 950
-        0x04, curve, 0xF7
+        rel & 0x7F, (rel >> 7) & 0x7F,
+        dr & 0x7F, (dr >> 7) & 0x7F,
+        win & 0x7F, curve & 0x7F, 0xF7
       ]);
     }
 
@@ -1336,11 +1385,18 @@
       const prof = userProfiles[name];
       config.curve = prof.curve;
       config.threshold = prof.threshold;
+      config.dynamicRange = prof.dynamicRange || 1000;
       config.banks = JSON.parse(JSON.stringify(prof.banks));
+      config.scale = prof.scale
+        ? JSON.parse(JSON.stringify(prof.scale))
+        : { enabled: false, root: 0, type: 0 };
 
       document.getElementById("inpCurve").value = config.curve;
       document.getElementById("inpThreshold").value = config.threshold;
       document.getElementById("lblThreshold").innerText = config.threshold;
+      document.getElementById("chkScaleEnabled").checked = !!config.scale.enabled;
+      document.getElementById("selScaleRoot").value = config.scale.root || 0;
+      document.getElementById("selScaleType").value = config.scale.type || 0;
 
       renderPads();
       renderKnobs();
@@ -1354,6 +1410,8 @@
       userProfiles[name] = {
         curve: parseInt(document.getElementById("inpCurve").value, 10),
         threshold: parseInt(document.getElementById("inpThreshold").value, 10),
+        dynamicRange: config.dynamicRange || 1000,
+        scale: JSON.parse(JSON.stringify(config.scale)),
         banks: JSON.parse(JSON.stringify(config.banks))
       };
       localStorage.setItem(STORAGE_KEY, JSON.stringify(userProfiles));
@@ -1368,6 +1426,8 @@
       userProfiles[cleanName] = {
         curve: parseInt(document.getElementById("inpCurve").value, 10),
         threshold: parseInt(document.getElementById("inpThreshold").value, 10),
+        dynamicRange: config.dynamicRange || 1000,
+        scale: JSON.parse(JSON.stringify(config.scale)),
         banks: JSON.parse(JSON.stringify(config.banks))
       };
       localStorage.setItem(STORAGE_KEY, JSON.stringify(userProfiles));
@@ -1455,11 +1515,11 @@
         }
       }
 
-      // 2. Send all Encoder Mappings across all 4 banks
+      // 2. Send all Encoder Mappings across all 4 banks (SMC_CMD_SET_ENC_MAP = 0x15)
       for (let b = 0; b < 4; b++) {
         for (let e = 0; e < 8; e++) {
           const enc = config.banks[b].encoders[e];
-          sendSysEx([0xF0, 0x7D, 0x01, 0x13, b, e, enc.cc, enc.channel, enc.step || 1, enc.min || 0, enc.max || 127, 0xF7]);
+          sendSysEx([0xF0, 0x7D, 0x01, 0x15, b, e, enc.cc, enc.channel, enc.step || 1, enc.min || 0, enc.max || 127, enc.mode || 0, 0xF7]);
           await new Promise(r => setTimeout(r, 8));
         }
       }

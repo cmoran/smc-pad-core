@@ -6,6 +6,12 @@
 #include "sysex_protocol.h"
 #include <string.h>
 
+static void notify_change(smc_sysex_engine_t *engine, uint8_t cmd) {
+    if (engine && engine->on_change_cb) {
+        engine->on_change_cb(cmd, engine->on_change_ctx);
+    }
+}
+
 static void send_ack(smc_sysex_engine_t *engine, uint8_t orig_cmd, uint8_t status) {
     if (!engine || !engine->tx_fn) return;
     uint8_t resp[7] = {
@@ -51,7 +57,7 @@ static void handle_get_pad_map(smc_sysex_engine_t *engine, const uint8_t *payloa
     }
 
     const smc_pad_cfg_t *p = &engine->cfg->pads[bank][pad];
-    uint8_t resp[10] = {
+    uint8_t resp[15] = {
         SMC_SYSEX_START,
         SMC_SYSEX_MFG_ID,
         SMC_SYSEX_DEV_ID,
@@ -61,6 +67,11 @@ static void handle_get_pad_map(smc_sysex_engine_t *engine, const uint8_t *payloa
         p->note & 0x7Fu,
         p->channel & 0x0Fu,
         p->mode & 0x7Fu,
+        p->chord_count & 0x7Fu,
+        (uint8_t)(((int16_t)p->chord_offsets[0] + 64) & 0x7Fu),
+        (uint8_t)(((int16_t)p->chord_offsets[1] + 64) & 0x7Fu),
+        (uint8_t)(((int16_t)p->chord_offsets[2] + 64) & 0x7Fu),
+        p->pressure_mode & 0x01u,
         SMC_SYSEX_END
     };
     engine->tx_fn(resp, sizeof(resp));
@@ -98,6 +109,7 @@ static void handle_set_pad_map(smc_sysex_engine_t *engine, const uint8_t *payloa
         engine->cfg->pads[bank][pad].pressure_mode = (payload[9] > 1) ? 1 : payload[9];
     }
 
+    notify_change(engine, SMC_CMD_SET_PAD_MAP);
     send_ack(engine, SMC_CMD_SET_PAD_MAP, SMC_STATUS_OK);
 }
 
@@ -114,7 +126,7 @@ static void handle_get_enc_map(smc_sysex_engine_t *engine, const uint8_t *payloa
     }
 
     const smc_encoder_cfg_t *e = &engine->cfg->encoders[bank][enc];
-    uint8_t resp[12] = {
+    uint8_t resp[13] = {
         SMC_SYSEX_START,
         SMC_SYSEX_MFG_ID,
         SMC_SYSEX_DEV_ID,
@@ -126,6 +138,7 @@ static void handle_get_enc_map(smc_sysex_engine_t *engine, const uint8_t *payloa
         e->step_size & 0x7Fu,
         e->min_val & 0x7Fu,
         e->max_val & 0x7Fu,
+        e->mode & 0x03u,
         SMC_SYSEX_END
     };
     engine->tx_fn(resp, sizeof(resp));
@@ -155,7 +168,11 @@ static void handle_set_enc_map(smc_sysex_engine_t *engine, const uint8_t *payloa
     engine->cfg->encoders[bank][enc].step_size = step_size ? step_size : 1;
     engine->cfg->encoders[bank][enc].min_val = min_val;
     engine->cfg->encoders[bank][enc].max_val = max_val;
+    if (len >= 8) {
+        engine->cfg->encoders[bank][enc].mode = (payload[7] <= 3) ? payload[7] : 0;
+    }
 
+    notify_change(engine, SMC_CMD_SET_ENC_MAP);
     send_ack(engine, SMC_CMD_SET_ENC_MAP, SMC_STATUS_OK);
 }
 
@@ -186,6 +203,7 @@ static void handle_set_scale_cfg(smc_sysex_engine_t *engine, const uint8_t *payl
     engine->cfg->scale.enabled = (payload[0] != 0);
     engine->cfg->scale.root_note = payload[1];
     engine->cfg->scale.scale_type = (smc_scale_type_t)payload[2];
+    notify_change(engine, SMC_CMD_SET_SCALE_CFG);
     send_ack(engine, SMC_CMD_SET_SCALE_CFG, SMC_STATUS_OK);
 }
 
@@ -237,6 +255,7 @@ static void handle_set_calibration(smc_sysex_engine_t *engine, const uint8_t *pa
     engine->cfg->scan_window_ms = win;
     engine->cfg->velocity_curve = cur;
 
+    notify_change(engine, SMC_CMD_SET_CALIBRATION);
     send_ack(engine, SMC_CMD_SET_CALIBRATION, SMC_STATUS_OK);
 }
 
@@ -279,6 +298,7 @@ static void handle_set_rgb_cfg(smc_sysex_engine_t *engine, const uint8_t *payloa
     engine->cfg->pad_hit_color  = hit;
     engine->cfg->led_mode       = mode;
 
+    notify_change(engine, SMC_CMD_SET_RGB_CFG);
     send_ack(engine, SMC_CMD_SET_RGB_CFG, SMC_STATUS_OK);
 }
 
@@ -337,6 +357,9 @@ static void process_sysex_packet(smc_sysex_engine_t *engine) {
     }
     case SMC_CMD_FACTORY_RESET: {
         bool ok = smc_config_factory_reset(engine->cfg);
+        if (ok) {
+            notify_change(engine, SMC_CMD_FACTORY_RESET);
+        }
         send_ack(engine, SMC_CMD_FACTORY_RESET, ok ? SMC_STATUS_OK : SMC_STATUS_ERR_FLASH);
         break;
     }
@@ -350,8 +373,16 @@ void smc_sysex_init(smc_sysex_engine_t *engine, smc_config_t *cfg, smc_sysex_tx_
     if (!engine) return;
     engine->cfg = cfg;
     engine->tx_fn = tx_fn;
+    engine->on_change_cb = NULL;
+    engine->on_change_ctx = NULL;
     engine->rx_idx = 0;
     engine->in_sysex = false;
+}
+
+void smc_sysex_set_change_callback(smc_sysex_engine_t *engine, smc_sysex_change_cb cb, void *ctx) {
+    if (!engine) return;
+    engine->on_change_cb = cb;
+    engine->on_change_ctx = ctx;
 }
 
 void smc_sysex_feed_byte(smc_sysex_engine_t *engine, uint8_t byte) {

@@ -19,7 +19,14 @@ static void hal_delay_us(uint32_t us) {
     sim_delay_count += us;
 }
 
+static uint32_t sim_read_count = 0;
+static bool     sim_alternating_noise = false;
+
 static uint16_t hal_read_ch3(void) {
+    if (sim_alternating_noise && sim_current_mux_ch == 0) {
+        sim_read_count++;
+        return (sim_read_count & 1u) ? 70u : 90u;
+    }
     return sim_pad_adc_values[sim_current_mux_ch];
 }
 
@@ -186,6 +193,13 @@ int main(void) {
     smc_pad_scan_step(&engine, &queue, 3050);
     ok = smc_queue_pop(&queue, &ev);
     assert(ok && ev.type == EVENT_PAD_RELEASE && ev.index == 4);
+
+    /* 5. Test multi-sample baseline averaging (alternating 70/90 -> average 80) */
+    sim_read_count = 0;
+    sim_alternating_noise = true;
+    smc_pad_calibrate_baseline(&engine);
+    sim_alternating_noise = false;
+    assert(engine.pads[0].baseline_adc == 80);
 
     printf("Pad ADC & Velocity Engine unit tests (including Anti-Stuck drift verification) passed!\n");
     return 0;

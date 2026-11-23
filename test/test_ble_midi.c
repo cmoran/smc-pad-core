@@ -66,24 +66,55 @@ static void test_ble_packet_timestamp_formatting(void) {
     printf("PASS: test_ble_packet_timestamp_formatting\n");
 }
 
+static uint8_t s_rx_sysex_buf[64];
+static size_t  s_rx_sysex_len = 0;
+
+static void on_ble_rx_byte(uint8_t byte, void *ctx) {
+    (void)ctx;
+    if (s_rx_sysex_len < sizeof(s_rx_sysex_buf)) {
+        s_rx_sysex_buf[s_rx_sysex_len++] = byte;
+    }
+}
+
+static bool mock_ble_loopback_send(const uint8_t *data, uint16_t len) {
+    assert(len <= sizeof(s_last_ble_pkt));
+    memcpy(s_last_ble_pkt, data, len);
+    s_last_ble_len = len;
+    s_ble_pkt_count++;
+    smc_ble_midi_parse_rx(data, len, on_ble_rx_byte, NULL);
+    return true;
+}
+
 static void test_ble_sysex_chunking(void) {
     printf("Running test_ble_sysex_chunking...\n");
     smc_ble_midi_t ble;
-    smc_ble_midi_init(&ble, mock_ble_send);
+    smc_ble_midi_init(&ble, mock_ble_loopback_send);
     smc_ble_midi_set_connected(&ble, true);
     smc_ble_midi_set_subscribed(&ble, true);
     smc_ble_midi_set_mtu(&ble, 23); /* max payload 20 */
 
     uint8_t sysex[35];
     sysex[0] = 0xF0;
-    for (int i = 1; i < 34; i++) sysex[i] = 0x42;
+    for (int i = 1; i < 34; i++) sysex[i] = (uint8_t)(0x20 + i);
     sysex[34] = 0xF7;
 
     s_ble_pkt_count = 0;
+    s_rx_sysex_len = 0;
     bool ok = smc_ble_midi_send_sysex(&ble, sysex, sizeof(sysex), 500);
     assert(ok == true);
-    assert(s_ble_pkt_count == 2); /* 35 bytes fits in 2 packets of <=20 bytes */
+    assert(s_ble_pkt_count == 2); /* 35 bytes + ts_low before 0xF7 fits in 2 packets of <=20 bytes */
     assert(s_last_ble_pkt[s_last_ble_len - 1] == 0xF7u);
+    assert((s_last_ble_pkt[s_last_ble_len - 2] & 0x80u) != 0); /* ts_low precedes 0xF7 */
+
+    /* Verify full TX -> RX round-trip matches byte-for-byte (continuation packet not corrupted) */
+    assert(s_rx_sysex_len == sizeof(sysex));
+    assert(memcmp(s_rx_sysex_buf, sysex, sizeof(sysex)) == 0);
+
+    /* Verify 2-byte continuation packet [header, data] is accepted */
+    s_rx_sysex_len = 0;
+    uint8_t cont2[] = { 0x80, 0x55 };
+    smc_ble_midi_parse_rx(cont2, sizeof(cont2), on_ble_rx_byte, NULL);
+    assert(s_rx_sysex_len == 1 && s_rx_sysex_buf[0] == 0x55);
 
     printf("PASS: test_ble_sysex_chunking\n");
 }

@@ -59,16 +59,19 @@ extern "C" {
 #define SMC_STATUS_ERR_PARAM        0x02u
 #define SMC_STATUS_ERR_FLASH        0x03u
 
-/* Transmit callback */
+/* Transmit & config-change callbacks */
 typedef void (*smc_sysex_tx_fn)(const uint8_t *data, size_t len);
+typedef void (*smc_sysex_change_cb)(uint8_t cmd, void *ctx);
 
 /* SysEx Engine State */
 typedef struct {
-    smc_config_t     *cfg;
-    smc_sysex_tx_fn   tx_fn;
-    uint8_t           rx_buf[SMC_SYSEX_MAX_LEN];
-    uint8_t           rx_idx;
-    bool              in_sysex;
+    smc_config_t       *cfg;
+    smc_sysex_tx_fn     tx_fn;
+    smc_sysex_change_cb on_change_cb;
+    void               *on_change_ctx;
+    uint8_t             rx_buf[SMC_SYSEX_MAX_LEN];
+    uint8_t             rx_idx;
+    bool                in_sysex;
 } smc_sysex_engine_t;
 
 /**
@@ -79,6 +82,11 @@ typedef struct {
  * @param tx_fn Function pointer for transmitting response SysEx packets
  */
 void smc_sysex_init(smc_sysex_engine_t *engine, smc_config_t *cfg, smc_sysex_tx_fn tx_fn);
+
+/**
+ * @brief Register an optional callback invoked after SysEx mutates configuration.
+ */
+void smc_sysex_set_change_callback(smc_sysex_engine_t *engine, smc_sysex_change_cb cb, void *ctx);
 
 /**
  * @brief Feed a single byte from the incoming MIDI stream.

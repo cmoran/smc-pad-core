@@ -41,23 +41,31 @@ void smc_pad_set_curve(smc_pad_matrix_t *engine, smc_velocity_curve_type_t curve
     }
 }
 
+#define SMC_PAD_CAL_SAMPLES 8u
+
 void smc_pad_calibrate_baseline(smc_pad_matrix_t *engine) {
     if (!engine) {
         return;
     }
-    for (uint8_t ch = 0; ch < 8; ch++) {
-        if (engine->hal.set_mux_channel) {
-            engine->hal.set_mux_channel(ch);
+    uint32_t sum[SMC_NUM_PADS] = { 0 };
+    for (uint8_t s = 0; s < SMC_PAD_CAL_SAMPLES; s++) {
+        for (uint8_t ch = 0; ch < 8; ch++) {
+            if (engine->hal.set_mux_channel) {
+                engine->hal.set_mux_channel(ch);
+            }
+            if (engine->hal.settling_delay_us) {
+                engine->hal.settling_delay_us(5);
+            }
+            if (engine->hal.read_adc_ch3) {
+                sum[ch] += engine->hal.read_adc_ch3();
+            }
+            if (engine->hal.read_adc_ch4) {
+                sum[ch + 8] += engine->hal.read_adc_ch4();
+            }
         }
-        if (engine->hal.settling_delay_us) {
-            engine->hal.settling_delay_us(5);
-        }
-        if (engine->hal.read_adc_ch3) {
-            engine->pads[ch].baseline_adc = engine->hal.read_adc_ch3();
-        }
-        if (engine->hal.read_adc_ch4) {
-            engine->pads[ch + 8].baseline_adc = engine->hal.read_adc_ch4();
-        }
+    }
+    for (uint8_t i = 0; i < SMC_NUM_PADS; i++) {
+        engine->pads[i].baseline_adc = (uint16_t)(sum[i] / SMC_PAD_CAL_SAMPLES);
     }
 }
 
@@ -67,7 +75,8 @@ static void process_single_pad(smc_pad_matrix_t *engine,
                               uint16_t sample,
                               uint32_t current_ticks) {
     smc_pad_channel_state_t *pad = &engine->pads[pad_idx];
-    uint16_t strike_threshold = pad->baseline_adc + engine->delta_strike;
+    uint32_t strike_thresh_32 = (uint32_t)pad->baseline_adc + (uint32_t)engine->delta_strike;
+    uint16_t strike_threshold = (strike_thresh_32 > 0xFFFFu) ? 0xFFFFu : (uint16_t)strike_thresh_32;
 
     switch (pad->state) {
         case PAD_IDLE:
@@ -115,8 +124,9 @@ static void process_single_pad(smc_pad_matrix_t *engine,
 
         case PAD_PRESSED:
             {
-                /* Relative release threshold with hysteresis */
-                uint16_t release_threshold = pad->baseline_adc + engine->delta_release;
+                /* Relative release threshold with hysteresis (overflow-safe) */
+                uint32_t rel_thresh_32 = (uint32_t)pad->baseline_adc + (uint32_t)engine->delta_release;
+                uint16_t release_threshold = (rel_thresh_32 > 0xFFFFu) ? 0xFFFFu : (uint16_t)rel_thresh_32;
                 if (sample <= release_threshold) {
                     pad->state = PAD_IDLE;
                     pad->peak_adc = 0;
